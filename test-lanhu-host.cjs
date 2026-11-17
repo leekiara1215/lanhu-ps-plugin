@@ -121,6 +121,24 @@ test("Lanhu upload requires login and exact test project before calling the real
     assert.ok(!JSON.stringify([result, env.messages]).includes(env.home.token));
 });
 
+test("Lanhu scoped host preserves lodash and never invokes a function's own bind utility", async () => {
+    const env = fixture();
+    function utility() { assert.equal(this, env.window); return "called"; }
+    utility.bind = () => { throw new TypeError("Expected a function"); };
+    utility.marker = "static method owner";
+    env.window._ = utility;
+    env.window.hostMethod = utility;
+    env.document.hostMethod = function () { assert.equal(this, env.document); return "document"; };
+    env.document.hostMethod.bind = utility.bind;
+    await env.host.connect();
+    const context = env.state.context;
+    assert.equal(context.window._, utility);
+    assert.equal(context.window._.marker, "static method owner");
+    assert.equal(context.window.hostMethod(), "called");
+    assert.equal(context.document.hostMethod(), "document");
+    await env.host.destroy();
+});
+
 test("Lanhu connect and upload reject concurrent operations without loading or uploading twice", async () => {
     let release, arrived;
     const gate = new Promise(resolve => { release = resolve; });

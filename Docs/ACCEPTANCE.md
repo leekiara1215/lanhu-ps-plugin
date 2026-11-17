@@ -108,3 +108,11 @@ Node61/61、Python17/17、语法/diff及19项包清单通过。release=`0.6.0-te
 ## 0.6.6实载：自绘选择器与原生输入视口裁剪
 
 后续用户两张0.6.5截图确认下拉仍为深灰色，滚动后输入编辑层覆盖顶部蓝栏。源码 `bb0b9ffab5cab5a75897030db61e700417dd9ba0` 将六个select统一为自绘combobox/listbox，保留精确值、禁用态与测试项目门禁；增加输入越过内容视口时隐藏、滚回恢复及销毁清理。面板专项52/52、HTML/语法/diff及19项包核对通过；后端/冻结模块不变。已UDT加载0.6.6 Loaded / Plugin Load Successful。用户随后对浅色下拉与滚动后不再覆盖顶部栏明确回复“两处都已正常”；这是用户实机确认，CUA未取得浮层像素，不外推全部交互通过。代理未应用/上传/切图/授权/写PSD，两稿磁盘SHA相同。最新release=`0.6.6-test-pickers-clipping`，完整候选、证据及回交步骤见[0.6.6接续](RETURN-20261117-PICKERS-066.md)。
+
+## 0.6.10 蓝湖初始化与浏览器授权修复（2026-11-17）
+
+用户实机反馈“蓝湖工具连接失败”、授权按钮无反应。UDT读取实际异常链定位到`lanhu-host.js:456`：UXP提供的`window._`含自有lodash `bind`，通用代理误调用该工具并抛`TypeError: Expected a function`。保留`window._`身份和静态方法，宿主方法转发改用`Function.prototype.bind.call`。新增该宿主行为回归。蓝湖host/build 25项、authoring 58项离线检查全部通过，diff检查通过。
+
+已用UDT加载0.6.10；真实PS28中经调试入口调用`connect`与`perform("browserAuth")`，浏览器现有会话自动授权，插件状态`connected=true/loggedIn=true/browserAuthorizing=false`，读取2个团队、5个项目，提示“已取得浏览器授权，请选择测试项目。”浮动面板不可被CUA捕获/直接操作，因此不把此证据记为按钮实际点击通过；没有上传、切图、写入或保存PSD。无打开文档时原版`getPSDName`有异常日志，未阻止上述授权与列表读取。
+
+修复候选、测试日志与脱敏核对记录：`/Users/betta/.codex/visualizations/2026/11/17/01a1e9e5-31d3-76c2-ba01-661771395b8c/lanhu-0610`，实际清单`GameUIIntegrated/manifest.json`，文件哈希与范围见`verification.json`。

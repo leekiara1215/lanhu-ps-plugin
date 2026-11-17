@@ -399,7 +399,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
                         await Promise.all(matches.map(removePhotoshopListener));
                     };
                     const value = Reflect.get(action, key, action);
-                    return typeof value === "function" ? value.bind(action) : value;
+                    return typeof value === "function" ? Function.prototype.bind.call(value, action) : value;
                 },
                 has(_, key) { return Reflect.has(action, key); }
             });
@@ -407,7 +407,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
                 get(_, key) {
                     if (key === "action") return actionProxy;
                     const value = Reflect.get(original, key, original);
-                    return typeof value === "function" ? value.bind(original) : value;
+                    return typeof value === "function" ? Function.prototype.bind.call(value, original) : value;
                 },
                 has(_, key) { return Reflect.has(original, key); }
             });
@@ -433,7 +433,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
                 if (key === "removeEventListener") return (type, callback, options) => untrack(runtimeRoot, type, callback, options);
                 if (localDocument.has(key)) return localDocument.get(key);
                 const value = Reflect.get(target, key, target);
-                return typeof value === "function" ? value.bind(target) : value;
+                return typeof value === "function" ? Function.prototype.bind.call(value, target) : value;
             },
             set(_, key, value) { localDocument.set(key, value); return true; },
             has(_, key) {
@@ -452,8 +452,10 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
                 if (key === "removeEventListener") return (type, callback, options) => untrack(target, type, callback, options);
                 if (localWindow.has(key)) return localWindow.get(key);
                 const value = Reflect.get(target, key, target);
-                if (typeof key === "string" && /^[A-Z]/.test(key)) return value;
-                return typeof value === "function" ? value.bind(target) : value;
+                // UXP exposes lodash as window._. Its own .bind is a utility,
+                // not Function.prototype.bind; libraries also need its static methods.
+                if (key === "_" || typeof key === "string" && /^[A-Z]/.test(key)) return value;
+                return typeof value === "function" ? Function.prototype.bind.call(value, target) : value;
             },
             set(_, key, value) { localWindow.set(key, value); return true; },
             has(_, key) {
