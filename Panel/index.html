@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
-<div class="app-header"><span class="app-name">资源创作 × 蓝湖</span><span class="app-version">隔离试用 · 0.6.5</span></div>
+<div class="app-header"><span class="app-name">资源创作 × 蓝湖</span><span class="app-version">隔离试用 · 0.6.6</span></div>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<div id="tabAuthoring" role="tab" aria-selected="true" aria-controls="authoringPane" class="ui-button" tabindex="0">资源创作 · 0.6.5</div>
+<div id="tabAuthoring" role="tab" aria-selected="true" aria-controls="authoringPane" class="ui-button" tabindex="0">资源创作 · 0.6.6</div>
 <div id="tabLanhu" role="tab" aria-selected="false" aria-controls="lanhuPane" class="ui-button" tabindex="0">蓝湖工具</div>
 </div>
 <div id="panelViewport"><div class="panel-content">
@@ -20,7 +20,7 @@
 <label>新资源名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
 <p>首次新建填写；引用现有资源自动继承。高级发布新版本时也使用以下设置。</p>
 <div class="row inset-row"><label>源边框 L<input id="left" type="number" min="0" value="0"></label><label>T<input id="top" type="number" min="0" value="0"></label><label>R<input id="right" type="number" min="0" value="0"></label><label>B<input id="bottom" type="number" min="0" value="0"></label></div>
-<label>采样<select id="sampling"><option value="Point">点采样（Point）</option><option value="Bilinear" selected>双线性（Bilinear）</option></select></label>
+<label>采样<div id="sampling" class="ui-select" aria-label="采样"></div></label>
 <p>源透明留白：显式补在选层非空边界外，单位为源像素。默认 0 按非空边界采集，不猜原画布。</p>
 <div class="row inset-row"><label>留白 L<input id="padLeft" type="number" min="0" value="0"></label><label>T<input id="padTop" type="number" min="0" value="0"></label><label>R<input id="padRight" type="number" min="0" value="0"></label><label>B<input id="padBottom" type="number" min="0" value="0"></label></div>
 </div>
@@ -80,16 +80,16 @@
 </div>
 <div class="tool-actions lanhu-toolbar"><div id="connectLanhu" class="ui-button" role="button" tabindex="0">刷新账号与项目</div><div id="lanhuLogout" aria-disabled="true" class="ui-button" role="button" tabindex="0">退出登录</div></div>
 <div class="lanhu-card">
-<label>团队<select id="lanhuTeam"><option value="">登录后选择团队</option></select></label>
-<label>项目<select id="lanhuProject"><option value="">请先选择团队</option></select></label>
-<label>分组<select id="lanhuGroup"><option value="">项目根目录</option></select></label>
+<label>团队<div id="lanhuTeam" class="ui-select" aria-label="团队"></div></label>
+<label>项目<div id="lanhuProject" class="ui-select" aria-label="项目"></div></label>
+<label>分组<div id="lanhuGroup" class="ui-select" aria-label="分组"></div></label>
 <p class="lanhu-scope">隔离试用：仅测试项目可上传。</p>
 </div>
 <div class="lanhu-subtabs" role="tablist" aria-label="蓝湖功能"><div id="lanhuUploadTab" role="tab" aria-selected="true" class="ui-button" tabindex="0">上传设计</div><div id="lanhuSliceTab" role="tab" aria-selected="false" class="ui-button" tabindex="0">切图</div></div>
 <div id="lanhuUploadView">
 <div class="lanhu-card">
 <h3>设计倍数</h3>
-<div class="row"><label>平台<select id="lanhuDevice"><option value="">请选择平台</option><option value="iOS">iOS</option><option value="Android">Android</option><option value="Web">Web</option></select></label><label>倍数<select id="lanhuScale"><option value="">请先选择平台</option></select></label></div>
+<div class="row"><label>平台<div id="lanhuDevice" class="ui-select" aria-label="平台"></div></label><label>倍数<div id="lanhuScale" class="ui-select" aria-label="设计倍数"></div></label></div>
 <h3>上传画板</h3>
 <div class="tool-actions"><div id="lanhuBoardsAll" aria-pressed="true" class="ui-button" role="button" tabindex="0">该页全部画板</div><div id="lanhuBoardsSelected" aria-pressed="false" class="ui-button" role="button" tabindex="0">选中画板</div></div>
 <p id="lanhuDocument">当前文档：未打开 PSD</p>

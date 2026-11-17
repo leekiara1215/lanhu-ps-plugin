@@ -17,13 +17,13 @@ p { color: #7b8391; line-height: 1.6; margin: 6px 0; }
 .workspace-card, .lanhu-card, .lanhu-quick-actions, #advancedPanel section { display: block; width: 100%; min-width: 0; padding: 12px; margin: 12px 0; box-sizing: border-box; background: #fff; border: 1px solid #e8ebf0; border-radius: 8px; }
 .scope { background: #edf4ff; padding: 9px 10px; color: #4f74a6; border-radius: 5px; font-size: 11px; }
 label { display: flex; flex-direction: column; flex-wrap: nowrap; width: 100%; min-width: 0; margin: 8px 0; color: #525c6c; line-height: 1.6; }
-input, select { width: 100%; min-width: 0; height: 32px; margin-top: 4px; padding: 5px 8px; box-sizing: border-box; border: 1px solid #dce1e8; border-radius: 4px; color: #242833; background: #fff; font-size: 12px; }
-input:focus, select:focus { border-color: #2878ff; }
+input { width: 100%; min-width: 0; height: 32px; margin-top: 4px; padding: 5px 8px; box-sizing: border-box; border: 1px solid #dce1e8; border-radius: 4px; color: #242833; background: #fff; font-size: 12px; }
+input:focus { border-color: #2878ff; }
 .ui-button { display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; user-select: none; width: 100%; min-width: 0; min-height: 32px; margin: 6px 0; padding: 7px 10px; box-sizing: border-box; color: #4e5969; background: #fff; border: 1px solid #dce1e8; border-radius: 4px; font-size: 12px; line-height: 1.5; }
 .ui-button[aria-disabled="false"]:hover { color: #2878ff; border-color: #9bcaff; background: #f5f9ff; }
 .ui-button[aria-disabled="false"]:active { color: #1957d2; background: #edf4ff; }
 .ui-button[aria-disabled="true"] { opacity: .45; }
-input:disabled, select:disabled { color: #9aa1ad; background: #f4f6f8; }
+input:disabled { color: #9aa1ad; background: #f4f6f8; }
 .primary-action, .lanhu-workspace .lanhu-primary { min-height: 38px; color: #fff; background: #2878ff; border-color: #2878ff; font-weight: bold; }
 .primary-action:hover, .lanhu-workspace .lanhu-primary:hover { color: #fff; background: #4e95ff; border-color: #4e95ff; }
 .primary-action:active, .lanhu-workspace .lanhu-primary:active { color: #fff; background: #1957d2; border-color: #1957d2; }
@@ -69,9 +69,23 @@ pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #9c632b; line-hei
 #lanhuProgress { white-space: pre-wrap; color: #58749d; background: #f3f7ff; }
 
 /* UXP native input chrome needs an explicit reset and opaque editor fill. */
-body input, body select { appearance: none !important; -webkit-appearance: none !important; min-height: 0 !important; height: 32px !important; line-height: normal !important; background-color: #fff !important; color: #242833 !important; border: 1px solid #dce1e8 !important; border-radius: 4px !important; outline: none; }
-body input:focus, body select:focus { border-color: #2878ff !important; }
-body input:disabled, body select:disabled { color: #9aa1ad !important; background-color: #f4f6f8 !important; }
+body input { appearance: none !important; -webkit-appearance: none !important; min-height: 0 !important; height: 32px !important; line-height: normal !important; background-color: #fff !important; color: #242833 !important; border: 1px solid #dce1e8 !important; border-radius: 4px !important; outline: none; }
+body input:focus { border-color: #2878ff !important; }
+body input:disabled { color: #9aa1ad !important; background-color: #f4f6f8 !important; }
 .ui-button:focus { outline: 2px solid #9bcaff; outline-offset: 1px; }
 .ui-button[aria-disabled="true"] { cursor: default; }
 .app-header, #panelTabs { flex-shrink: 0; min-height: 44px; }
+
+/* Div-based pickers avoid host-painted select chrome, including disabled fields. */
+label { text-align: left !important; align-items: stretch; }
+.ui-select { width: 100%; min-width: 0; margin-top: 4px; }
+.ui-select-trigger { display: flex; flex-direction: row; align-items: center; justify-content: space-between; width: 100%; min-width: 0; min-height: 32px; padding: 6px 9px; box-sizing: border-box; border: 1px solid #dce1e8; border-radius: 4px; color: #242833; background: #fff; cursor: pointer; text-align: left; }
+.ui-select-caption { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ui-select-arrow { flex: 0 0 14px; width: 14px; margin-left: 6px; color: #8993a2; text-align: right; }
+.ui-select-trigger[aria-expanded="true"], .ui-select-trigger:focus { border-color: #2878ff; }
+.ui-select[aria-disabled="true"] .ui-select-trigger { background: #f8f9fc; border-color: #e5e9f0; color: #a4adba; cursor: default; }
+.ui-select[aria-disabled="true"] .ui-select-arrow { color: #b8c0cc; }
+.ui-select-list { display: none; width: 100%; max-height: 160px; overflow-x: hidden; overflow-y: scroll; margin-top: 4px; padding: 4px; box-sizing: border-box; border: 1px solid #dce5f2; border-radius: 4px; background: #fff; }
+.ui-select-option { display: block; width: 100%; min-height: 30px; padding: 6px 8px; box-sizing: border-box; border-radius: 3px; color: #525c6c; white-space: pre-wrap; word-wrap: break-word; cursor: pointer; }
+.ui-select-option[aria-selected="true"], .ui-select-option[data-active="true"], .ui-select-option[aria-disabled="false"]:hover { color: #2878ff; background: #edf4ff; }
+.ui-select-option[aria-disabled="true"] { color: #a4adba; background: #fff; cursor: default; }

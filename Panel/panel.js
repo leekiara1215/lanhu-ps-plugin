@@ -71,6 +71,139 @@ function onClick(element, action) {
 }
 for (const element of document.querySelectorAll(".ui-button")) prepareButton(element);
 
+const selectControls = new Map();
+let openedSelect = null;
+function closeSelectMenus() { if (openedSelect) openedSelect.close(); }
+function makeSelect(id, rows, selected = "") {
+    const element = $(id), trigger = document.createElement("div"), caption = document.createElement("span"), arrow = document.createElement("span"), list = document.createElement("div");
+    let choices = [], value = "", disabled = false, expanded = false, active = -1;
+    const callbacks = [];
+    trigger.className = "ui-select-trigger"; trigger.setAttribute("role", "combobox");
+    trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-controls", id + "-options");
+    trigger.setAttribute("aria-label", element.getAttribute("aria-label") || "请选择");
+    caption.className = "ui-select-caption"; arrow.className = "ui-select-arrow"; arrow.setAttribute("aria-hidden", "true");
+    trigger.appendChild(caption); trigger.appendChild(arrow);
+    list.className = "ui-select-list"; list.setAttribute("id", id + "-options"); list.setAttribute("role", "listbox");
+    element.appendChild(trigger); element.appendChild(list);
+    function paint() {
+        const current = choices.find(row => row.id === value);
+        caption.textContent = current ? current.name : "请选择";
+        arrow.textContent = expanded ? "▴" : "▾";
+        trigger.setAttribute("aria-expanded", expanded ? "true" : "false");
+        trigger.setAttribute("aria-disabled", disabled ? "true" : "false");
+        trigger.setAttribute("tabindex", disabled ? "-1" : "0");
+        element.setAttribute("aria-disabled", disabled ? "true" : "false");
+        list.style.display = expanded ? "block" : "none";
+        for (let index = 0; index < list.children.length; index++) {
+            list.children[index].setAttribute("aria-selected", choices[index].id === value ? "true" : "false");
+            list.children[index].setAttribute("data-active", index === active ? "true" : "false");
+        }
+        trigger.setAttribute("aria-activedescendant", expanded && active >= 0 ? id + "-option-" + active : "");
+    }
+    function close(focus = false) {
+        const wasExpanded = expanded;
+        expanded = false; if (openedSelect === control) openedSelect = null; paint();
+        if (wasExpanded) scheduleInputClipping();
+        if (focus && typeof trigger.focus === "function") trigger.focus();
+    }
+    function open() {
+        if (disabled || destroyed) return;
+        if (openedSelect && openedSelect !== control) openedSelect.close();
+        expanded = true; openedSelect = control;
+        active = choices.findIndex(row => row.id === value && !row.disabled);
+        if (active < 0) active = choices.findIndex(row => !row.disabled);
+        paint(); scheduleInputClipping();
+    }
+    function choose(index) {
+        if (!expanded || disabled || destroyed || !choices[index] || choices[index].disabled) return;
+        const next = choices[index].id, changed = value !== next;
+        value = next; close(true); scheduleInputClipping();
+        if (changed) return Promise.all(callbacks.map(callback => callback({ target: element })));
+    }
+    function move(direction, end) {
+        const enabled = choices.map((row, index) => !row.disabled ? index : -1).filter(index => index >= 0);
+        if (!enabled.length) return;
+        active = end === "first" ? enabled[0] : end === "last" ? enabled[enabled.length - 1] : enabled[(enabled.indexOf(active) + direction + enabled.length) % enabled.length];
+        paint();
+        const option = list.children[active];
+        if (option && typeof option.getBoundingClientRect === "function" && typeof list.getBoundingClientRect === "function") {
+            const item = option.getBoundingClientRect(), box = list.getBoundingClientRect();
+            if (item.top < box.top) list.scrollTop -= box.top - item.top;
+            else if (item.bottom > box.bottom) list.scrollTop += item.bottom - box.bottom;
+        }
+    }
+    const control = { element, close, onChange(callback) { callbacks.push(callback); },
+        setChoices(next, selectedValue) {
+            close(); choices = next.map(row => ({ id: String(row.id), name: String(row.name), disabled: !!row.disabled }));
+            list.textContent = "";
+            choices.forEach((row, index) => {
+                const option = document.createElement("div"); option.className = "ui-select-option"; option.textContent = row.name;
+                option.setAttribute("id", id + "-option-" + index); option.setAttribute("role", "option");
+                option.setAttribute("data-value", row.id); option.setAttribute("aria-disabled", row.disabled ? "true" : "false");
+                option.addEventListener("click", () => choose(index)); list.appendChild(option);
+            });
+            element.value = selectedValue;
+        }
+    };
+    Object.defineProperty(element, "value", { configurable: true, get() { return value; }, set(next) {
+        const text = String(next == null ? "" : next); value = choices.some(row => row.id === text) ? text : ""; paint();
+    } });
+    Object.defineProperty(element, "disabled", { configurable: true, get() { return disabled; }, set(next) {
+        disabled = !!next; if (disabled) close(); else paint();
+    } });
+    trigger.addEventListener("click", () => { if (expanded) close(); else open(); });
+    trigger.addEventListener("keydown", event => {
+        if (event.key === "Tab") { close(); return; }
+        if (disabled || destroyed) return;
+        if (!["Enter", " ", "Spacebar", "Escape", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        if (event.key === "Escape") { close(); return; }
+        if (["Enter", " ", "Spacebar"].includes(event.key)) {
+            if (event.repeat) return;
+            if (expanded) return choose(active);
+            open(); return;
+        }
+        const wasOpen = expanded; if (!expanded) open();
+        if (event.key === "Home" || event.key === "End") move(0, event.key === "Home" ? "first" : "last");
+        else if (wasOpen) move(event.key === "ArrowDown" ? 1 : -1);
+    });
+    selectControls.set(id, control); control.setChoices(rows, selected); return control;
+}
+function onValueChange(element, callback) {
+    const control = selectControls.get(element.id || element.getAttribute("id"));
+    if (control) control.onChange(callback); else element.addEventListener("change", callback);
+}
+makeSelect("sampling", [{ id: "Point", name: "点采样（Point）" }, { id: "Bilinear", name: "双线性（Bilinear）" }], "Bilinear");
+makeSelect("lanhuDevice", [{ id: "", name: "请选择平台", disabled: true }, ...["iOS", "Android", "Web"].map(id => ({ id, name: id }))]);
+for (const id of ["lanhuTeam", "lanhuProject", "lanhuGroup", "lanhuScale"]) makeSelect(id, [{ id: "", name: id === "lanhuGroup" ? "项目根目录" : "请先登录或选择项目" }]);
+
+const hostWindow = typeof window === "undefined" ? null : window;
+let clippingFrame = null;
+function updateInputClipping() {
+    if (destroyed || typeof $("panelViewport").getBoundingClientRect !== "function") return;
+    const viewport = $("panelViewport").getBoundingClientRect();
+    if (!Number.isFinite(viewport.top) || !Number.isFinite(viewport.bottom) || viewport.bottom <= viewport.top) return;
+    for (const input of document.querySelectorAll("input")) {
+        if (typeof input.getBoundingClientRect !== "function") continue;
+        const box = input.getBoundingClientRect();
+        const clipped = !Number.isFinite(box.top) || !Number.isFinite(box.bottom) || box.bottom <= box.top || box.top < viewport.top - .5 || box.bottom > viewport.bottom + .5;
+        input.style.visibility = clipped ? "hidden" : "visible";
+        input.style.opacity = clipped ? "0" : "1";
+    }
+}
+function scheduleInputClipping() {
+    if (destroyed) return;
+    updateInputClipping();
+    if (clippingFrame !== null || !hostWindow || typeof hostWindow.requestAnimationFrame !== "function") return;
+    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; updateInputClipping(); });
+}
+function onOutsideSelectClick(event) {
+    if (openedSelect && !openedSelect.element.contains(event.target)) closeSelectMenus();
+}
+document.addEventListener("click", onOutsideSelectClick);
+$("panelViewport").addEventListener("scroll", scheduleInputClipping);
+if (hostWindow && typeof hostWindow.addEventListener === "function") hostWindow.addEventListener("resize", scheduleInputClipping);
+
 function lanhuMessage(message) {
     if (destroyed) return;
     $("lanhuStatus").textContent = message;
@@ -84,13 +217,8 @@ function lanhuView() {
 function fillSelect(id, rows, selected, placeholder) {
     const select = $(id), signature = JSON.stringify([rows, selected, placeholder]);
     if (select.workspaceSignature === signature) return;
-    select.textContent = "";
-    for (const row of [{ id: "", name: placeholder }, ...rows]) {
-        const option = document.createElement("option"); option.value = row.id; option.textContent = row.name;
-        if (row.disabled) option.disabled = true;
-        select.appendChild(option);
-    }
-    select.value = selected || ""; select.workspaceSignature = signature;
+    selectControls.get(id).setChoices([{ id: "", name: placeholder, disabled: id !== "lanhuGroup" }, ...rows], selected || "");
+    select.workspaceSignature = signature;
 }
 function updateLanhuControls(syncStatus = false) {
     const state = lanhuHost && lanhuHost.status();
@@ -146,12 +274,14 @@ function renderLanhuWorkspace() {
         $("lanhuProgress").textContent = (labels[view.upload.phase] || "上传状态待确认") + "\n进度 " + view.upload.percentage + "% · 共 " + view.upload.total + " 项 · 成功 " + view.upload.success + " 项 · 失败 " + view.upload.fail + " 项";
     }
     updateLanhuControls();
+    scheduleInputClipping();
 }
 function renderLanhuScales(device, selected, scales) {
     const rows = scales && scales[device] || [];
     fillSelect("lanhuScale", rows.map(item => ({ id: item.label, name: item.label + " · " + item.value })), selected, "请选择设计倍数");
 }
 function showTab(name) {
+    closeSelectMenus();
     activeTab = name;
     $("authoringPane").style.display = name === "authoring" ? "block" : "none";
     $("lanhuPane").style.display = name === "lanhu" ? "block" : "none";
@@ -220,19 +350,19 @@ onClick($("lanhuLogout"), () => lanhuTask(() => lanhuHost.perform("logout")));
 onClick($("lanhuBrowserAuth"), () => lanhuTask(() => lanhuHost.perform("browserAuth")));
 onClick($("lanhuCancelAuth"), () => lanhuTask(() => lanhuHost.perform("cancelBrowserAuth")));
 for (const [id, action] of [["lanhuTeam", "team"], ["lanhuProject", "project"], ["lanhuGroup", "group"]]) {
-    $(id).addEventListener("change", () => { const value = $(id).value; return lanhuTask(() => lanhuHost.perform(action, value)); });
+    onValueChange($(id), () => { const value = $(id).value; return lanhuTask(() => lanhuHost.perform(action, value)); });
 }
 function saveLanhuSettings(scope = boardScope) {
     const value = { deviceType: $("lanhuDevice").value, deviceScale: $("lanhuScale").value, artboardType: scope };
     return lanhuTask(() => lanhuHost.perform("settings", value));
 }
-$("lanhuDevice").addEventListener("change", () => {
+onValueChange($("lanhuDevice"), () => {
     const device = $("lanhuDevice").value, scales = lanhuView().scales;
     const first = scales && scales[device] && scales[device][0];
     renderLanhuScales(device, first && first.label, scales);
     return saveLanhuSettings();
 });
-$("lanhuScale").addEventListener("change", () => saveLanhuSettings());
+onValueChange($("lanhuScale"), () => saveLanhuSettings());
 onClick($("lanhuBoardsAll"), () => saveLanhuSettings(1));
 onClick($("lanhuBoardsSelected"), () => saveLanhuSettings(2));
 for (const [id, action] of [["lanhuSliceLayer", "sliceWithLayer"], ["lanhuSliceGroup", "sliceWithGroup"], ["lanhuUnslice", "unslice"], ["lanhuShowSlices", "showSlice"], ["lanhuHideSlices", "hiddenSlice"], ["lanhuBack", "back"]]) {
@@ -322,6 +452,7 @@ function updateMode() {
         "，L/T/R/B " + [asset.nineSlice.left, asset.nineSlice.top, asset.nineSlice.right, asset.nineSlice.bottom].join("/") +
         "，" + samplingText(asset) : "";
     $("primaryAction").textContent = asset ? "引用资源并应用到选层" : "创建资源并应用到选层";
+    scheduleInputClipping();
 }
 function renderResources(preferred, syncFields = true, pending) {
     const prior = preferred === undefined ? explicitResourceRef || "" : preferred;
@@ -531,6 +662,7 @@ async function run(action) {
     if (busy || lanhuBusy) return;
     if (lanhuHost.status().uploading) { status("蓝湖上传尚在进行，请完成后再修改资源或PSD。"); return; }
     busy = true;
+    closeSelectMenus(); updateLanhuControls();
     for (const button of document.querySelectorAll(".ui-button")) button.disabled = true;
     try { const result = await action(); if (action !== refresh) await refresh(); if (typeof result === "string") status(result); }
     catch (error) { status(errorText(error)); }
@@ -713,7 +845,7 @@ bind("export", async () => {
 for (const id of ["displayName", "left", "top", "right", "bottom", "sampling", "targetWidth", "targetHeight"]) {
     const edited = () => fieldEdits.set(id, { key: currentSelectionKey(), revision: ++editRevision });
     $(id).addEventListener("input", edited);
-    $(id).addEventListener("change", edited);
+    onValueChange($(id), edited);
 }
 async function onSelectionEvent() {
     if (destroyed || busy || catalogLoading) return;
@@ -729,6 +861,11 @@ async function registerSelectionEvents() {
 }
 uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy() {
     destroyed = true;
+    closeSelectMenus();
+    document.removeEventListener("click", onOutsideSelectClick);
+    $("panelViewport").removeEventListener("scroll", scheduleInputClipping);
+    if (hostWindow && typeof hostWindow.removeEventListener === "function") hostWindow.removeEventListener("resize", scheduleInputClipping);
+    if (clippingFrame !== null && hostWindow && typeof hostWindow.cancelAnimationFrame === "function") hostWindow.cancelAnimationFrame(clippingFrame);
     await lanhuHost.destroy();
     if (listenerRegistered) await ps.action.removeNotificationListener(selectionEvents, onSelectionEvent);
 } }, panels: { gameuiAuthoring: { show() { if (!busy) run(refresh); } } } });

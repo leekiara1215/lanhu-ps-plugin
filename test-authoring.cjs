@@ -365,19 +365,22 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         setAttribute(name, value) { this[name] = value; }
         getAttribute(name) { return this[name] === undefined ? null : this[name]; }
         addEventListener(name, callback) { this.listeners[name] = callback; }
+        removeEventListener(name, callback) { if (this.listeners[name] === callback) delete this.listeners[name]; }
+        contains(target) { return this === target || this.children.some(child => child.contains(target)); }
     }
     const html = fs.readFileSync(path.join(__dirname, "Panel/index.html"), "utf8");
     const elements = {};
     for (const match of html.matchAll(/<(\w+)[^>]*id="([^"]+)"[^>]*>/g)) {
         const element = elements[match[2]] = new Element(match[1]);
+        element.id = match[2];
         const value = match[0].match(/value="([^"]*)"/); if (value) element.value = value[1];
         for (const attribute of match[0].matchAll(/(class|role|aria-disabled|aria-selected|aria-pressed|tabindex)="([^"]*)"/g)) {
             element.setAttribute(attribute[1], attribute[2]);
             if (attribute[1] === "class") element.className = attribute[2];
         }
     }
-    elements.sampling.value = "Bilinear";
-    assert.match(html, /option value="Point"/); assert.match(html, /option value="Bilinear"/);
+    assert.match(html, /id="sampling" class="ui-select"/);
+    assert.doesNotMatch(html, /<select\b|<option\b/);
     const env = host(); env.doc.name = "IsolatedPanelTest.psd"; env.photoshop.app.documents = [env.doc];
     env.state.documentsXmp = {};
     env.state.history = [];
@@ -444,8 +447,11 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         if (startup.showDuringSetup) value.panels.gameuiAuthoring.show();
     } }, storage: { localFileSystem: { async getDataFolder() { await catalogReady; return folder; },
         async getFileForOpening() { return { async read() { return JSON.stringify(startup.importDirectory || author.directory(fixture().metadata)); } }; } } } };
+    const documentEvents = {};
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "Panel/panel.js"), "utf8"), {
         document: { getElementById(id) { assert.ok(elements[id], id); return elements[id]; }, createElement(tag) { return new Element(tag); },
+            addEventListener(name, callback) { documentEvents[name] = callback; },
+            removeEventListener(name, callback) { if (documentEvents[name] === callback) delete documentEvents[name]; },
             querySelectorAll(tag) {
                 const all = Object.values(elements);
                 const seen = new Set(all);
@@ -462,9 +468,15 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         }
     });
     await new Promise(resolve => setImmediate(resolve));
-    return { ...env, elements, file, releaseCatalog, entrypoints,
+    return { ...env, elements, file, releaseCatalog, entrypoints, documentEvents,
         async notify(name = "select") { if (notification) await notification(name, {}); },
         async click(id) { await elements[id].listeners.click(); },
+        async chooseSelect(id, value) {
+            const [trigger, list] = elements[id].children;
+            if (trigger.getAttribute("aria-expanded") !== "true") await trigger.listeners.click();
+            const option = list.children.find(row => row.getAttribute("data-value") === value);
+            assert.ok(option, id + " option " + value); return option.listeners.click();
+        },
         chosenResource() { return elements.resources.children.find(row => row.getAttribute("aria-pressed") === "true")?.getAttribute("data-resource-ref"); },
         chooseResource(ref) {
             const row = elements.resources.children.find(row => row.getAttribute("data-resource-ref") === ref);
@@ -938,7 +950,7 @@ test("selection refresh preserves edited fields while untouched fields inherit t
     env.elements.displayName.value = "尚未发布的名称";
     env.elements.displayName.listeners.input?.();
     env.elements.left.value = "2"; env.elements.left.listeners.change?.();
-    env.elements.sampling.value = "Bilinear"; env.elements.sampling.listeners.change?.();
+    await env.chooseSelect("sampling", "Bilinear");
     read.release(); await pending;
     assert.equal(env.elements.targetWidth.value, "123");
     assert.equal(env.elements.targetHeight.value, "5", "Untouched fields still receive the selected instance defaults.");
@@ -1145,10 +1157,10 @@ test("native Lanhu workspace renders real lists and wires account, selection and
     assert.equal(env.elements.lanhuPassword.value, "");
     assert.equal(env.elements.lanhuLogin.style.display, "none");
     assert.equal(env.elements.lanhuAccountSummary.textContent, "美术");
-    env.elements.lanhuTeam.value = "team"; await env.elements.lanhuTeam.listeners.change();
-    assert.equal(env.elements.lanhuProject.children.find(item => item.value === "other").disabled, true);
-    env.elements.lanhuProject.value = project; await env.elements.lanhuProject.listeners.change();
-    env.elements.lanhuDevice.value = "Web"; await env.elements.lanhuDevice.listeners.change();
+    await env.chooseSelect("lanhuTeam", "team");
+    assert.equal(env.elements.lanhuProject.children[1].children.find(item => item.getAttribute("data-value") === "other").getAttribute("aria-disabled"), "true");
+    await env.chooseSelect("lanhuProject", project);
+    await env.chooseSelect("lanhuDevice", "Web");
     assert.equal(view.deviceScale, "@1x");
     assert.equal(env.elements.lanhuUploadAction.disabled, false);
     await env.click("lanhuBoardsSelected");
@@ -1206,4 +1218,71 @@ test("custom buttons retain mouse and keyboard activation, ARIA and hard disable
     button.disabled = false; await env.click("toggleAdvanced"); assert.equal(env.elements.advancedPanel.style.display, "block");
     assert.equal(prevented, 4);
     assert.equal(env.elements.tabAuthoring.getAttribute("role"), "tab", "Custom drawing preserves tab semantics.");
+});
+
+test("custom pickers preserve exact values, keyboard selection and cancel without native select chrome or PSD writes", async () => {
+    const state = { connected: true, loggedIn: false, uploading: false, projectId: null };
+    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => state, async destroy() {} }) });
+    const [trigger, list] = env.elements.sampling.children;
+    assert.equal(env.elements.sampling.tag, "div"); assert.equal(trigger.getAttribute("role"), "combobox");
+    assert.equal(trigger.getAttribute("aria-expanded"), "false"); assert.equal(env.elements.sampling.value, "Bilinear");
+    const key = (key, repeat = false) => trigger.listeners.keydown({ key, repeat, preventDefault() {} });
+    await key("Enter"); await key("ArrowUp"); await key("Enter");
+    assert.equal(env.elements.sampling.value, "Point");
+    assert.equal(list.children.find(item => item.getAttribute("data-value") === "Point").getAttribute("aria-selected"), "true");
+    await key(" "); await key("ArrowDown"); await key("Escape");
+    assert.equal(env.elements.sampling.value, "Point", "Escape must not commit the highlighted value.");
+    await env.chooseSelect("sampling", "Bilinear"); assert.equal(env.elements.sampling.value, "Bilinear");
+    await key("Enter"); await key("Enter", true); assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    env.documentEvents.click({ target: env.elements.displayName }); assert.equal(trigger.getAttribute("aria-expanded"), "false");
+    await key("Enter"); await env.elements.lanhuDevice.children[0].listeners.click();
+    assert.equal(trigger.getAttribute("aria-expanded"), "false", "Opening another picker closes the first.");
+    env.elements.lanhuDevice.children[0].listeners.keydown({ key: "Tab" });
+    assert.equal(env.elements.lanhuDevice.children[0].getAttribute("aria-expanded"), "false");
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
+});
+
+test("custom picker stays open on unchanged state and refuses disabled fields or projects when locked", async () => {
+    const project = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
+    const view = { connected: true, loggedIn: false, uploading: false, teams: [{ id: "team", name: "实际团队" }], projects: [{ id: "other", name: "其他项目" }, { id: project, name: "测试项目" }], groups: [], scales: {} };
+    const calls = []; let changed;
+    const env = await panelHarness(undefined, undefined, { lanhuHost: ({ onChange }) => {
+        changed = onChange;
+        return { status: () => view, workspace: () => view, async perform(name, value) { calls.push({ name, value }); if (name === "project") view.projectId = value; }, async destroy() {} };
+    } });
+    const teamTrigger = env.elements.lanhuTeam.children[0];
+    await teamTrigger.listeners.click();
+    assert.equal(teamTrigger.getAttribute("aria-expanded"), "false"); assert.equal(teamTrigger.getAttribute("aria-disabled"), "true");
+    view.loggedIn = true; changed(); await teamTrigger.listeners.click(); changed();
+    assert.equal(teamTrigger.getAttribute("aria-expanded"), "true", "Memory status refresh must not rebuild or close an unchanged open menu.");
+    await env.chooseSelect("lanhuProject", "other");
+    assert.equal(env.elements.lanhuProject.value, ""); assert.equal(calls.length, 0);
+    const projectTrigger = env.elements.lanhuProject.children[0];
+    await projectTrigger.listeners.keydown({ key: "Home", preventDefault() {} });
+    await projectTrigger.listeners.keydown({ key: "Enter", preventDefault() {} });
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ name: "project", value: project }]);
+    view.uploading = true; changed(); await teamTrigger.listeners.click();
+    assert.equal(teamTrigger.getAttribute("aria-expanded"), "false");
+    assert.equal(teamTrigger.getAttribute("tabindex"), "-1");
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
+});
+
+test("scroll clipping hides native editors outside the content viewport and restores values and lifecycle listeners", async () => {
+    const env = await panelHarness();
+    env.elements.panelViewport.getBoundingClientRect = () => ({ top: 88, bottom: 450 });
+    let fieldTop = 60;
+    env.elements.targetWidth.getBoundingClientRect = () => ({ top: fieldTop, bottom: fieldTop + 32 });
+    env.elements.targetHeight.getBoundingClientRect = () => ({ top: 150, bottom: 182 });
+    env.elements.targetWidth.value = "180"; env.elements.targetHeight.value = "40";
+    env.elements.panelViewport.listeners.scroll();
+    assert.equal(env.elements.targetWidth.style.visibility, "hidden"); assert.equal(env.elements.targetWidth.style.opacity, "0");
+    assert.equal(env.elements.targetHeight.style.visibility, "visible");
+    fieldTop = 200; env.elements.panelViewport.listeners.scroll();
+    assert.equal(env.elements.targetWidth.style.visibility, "visible"); assert.equal(env.elements.targetWidth.style.opacity, "1");
+    assert.equal(env.elements.targetWidth.value, "180"); assert.equal(env.elements.targetHeight.value, "40");
+    fieldTop = 440; env.elements.panelViewport.listeners.scroll();
+    assert.equal(env.elements.targetWidth.style.visibility, "hidden", "Partially clipped editors must not paint across the viewport boundary.");
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
+    await env.entrypoints.value.plugin.destroy();
+    assert.equal(env.documentEvents.click, undefined); assert.equal(env.elements.panelViewport.listeners.scroll, undefined);
 });
