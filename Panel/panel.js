@@ -11,6 +11,8 @@ let busy = false;
 let catalogLoading = true;
 let catalogFailure = null;
 let explicitResourceRef = null;
+let selectedResourceRef = "";
+let resourceChoicesSignature = null;
 let selectionIdentity = null;
 let lastBoundRef = null;
 let renderedRef = null;
@@ -33,7 +35,7 @@ function options() {
             right: Number($("right").value), bottom: Number($("bottom").value) } };
 }
 function resource() {
-    const ref = $("resources").value;
+    const ref = selectedResourceRef;
     if (!ref || !catalog.assets[ref]) throw new Error("请先选择资源版本。");
     return ref;
 }
@@ -42,22 +44,22 @@ function defaultField(id, value, pending) {
     if (!pending || !edit || edit.key !== pending.key || edit.revision <= pending.revision) $(id).value = value;
 }
 function assetFields(pending) {
-    const asset = catalog.assets[$("resources").value];
+    const asset = catalog.assets[selectedResourceRef];
     if (!asset) {
         $("identityInfo").textContent = "新建公共资源；内部引用与版本由工具自动维护。";
         $("resourceInfo").textContent = "";
         updateMode(); return;
     }
     defaultField("displayName", asset.displayName || asset.assetKey || "", pending);
-    $("identityInfo").textContent = displayText("诊断引用（工具维护）：\n" + $("resources").value);
+    $("identityInfo").textContent = displayText("诊断引用（工具维护）：\n" + selectedResourceRef);
     for (const side of ["left", "top", "right", "bottom"]) defaultField(side, String(asset.nineSlice[side]), pending);
     defaultField("sampling", asset.sampling ? asset.sampling.filterMode : "Bilinear", pending);
     $("sampling").setAttribute("value", $("sampling").value);
-    $("resourceInfo").textContent = displayText($("resources").value) + "\n" + asset.sourceSize.width + "×" + asset.sourceSize.height + " 源像素";
+    $("resourceInfo").textContent = displayText(selectedResourceRef) + "\n" + asset.sourceSize.width + "×" + asset.sourceSize.height + " 源像素";
     updateMode();
 }
 function updateMode() {
-    const asset = catalog.assets[$("resources").value];
+    const asset = catalog.assets[selectedResourceRef];
     $("newResourceSettings").style.display = asset && !advancedOpen ? "none" : "block";
     $("inheritedContract").style.display = asset ? "block" : "none";
     $("inheritedContract").textContent = asset ? "自动继承：源 " + asset.sourceSize.width + "×" + asset.sourceSize.height +
@@ -66,27 +68,50 @@ function updateMode() {
     $("primaryAction").textContent = asset ? "引用资源并应用到选层" : "创建资源并应用到选层";
 }
 function renderResources(preferred, syncFields = true, pending) {
-    const select = $("resources");
     const prior = preferred === undefined ? explicitResourceRef || "" : preferred;
-    select.textContent = "";
-    const createOption = document.createElement("option");
-    createOption.value = ""; createOption.textContent = "新建公共资源";
-    select.appendChild(createOption);
     const entries = Object.keys(catalog.assets).sort().map(ref => ({ ref,
         label: (typeof catalog.assets[ref].displayName === "string" && catalog.assets[ref].displayName.trim() || "未命名资源") + " · v" + catalog.assets[ref].version }));
     const counts = new Map();
     for (const entry of entries) counts.set(entry.label, (counts.get(entry.label) || 0) + 1);
-    for (const [index, entry] of entries.entries()) {
-        const option = document.createElement("option");
-        option.value = entry.ref;
-        option.textContent = entry.label + (counts.get(entry.label) > 1 ? " · 条目 " + (index + 1) : "");
-        select.appendChild(option);
+    const choices = [{ ref: "", label: "新建公共资源" }, ...entries.map((entry, index) => ({ ref: entry.ref,
+        label: entry.label + (counts.get(entry.label) > 1 ? " · 条目 " + (index + 1) : "") }))];
+    const signature = JSON.stringify(choices);
+    if (signature !== resourceChoicesSignature) {
+        const list = $("resources"); list.textContent = "";
+        for (const choice of choices) {
+            const button = document.createElement("button"); button.className = "resource-choice";
+            button.setAttribute("type", "button");
+            button.setAttribute("data-resource-ref", choice.ref);
+            button.setAttribute("data-resource-label", choice.label);
+            button.disabled = busy || catalogLoading || !!catalogFailure;
+            button.addEventListener("click", () => chooseResource(choice.ref));
+            list.appendChild(button);
+        }
+        resourceChoicesSignature = signature;
     }
     const selected = catalog.assets[prior] ? prior : "";
-    select.value = selected; select.setAttribute("value", selected);
+    selectedResourceRef = selected;
+    markResourceChoice();
+    $("resourceCount").textContent = entries.length + " 个资源版本；点击行选择，可在列表内滚动。";
     if (syncFields || renderedRef !== selected) assetFields(pending);
     else updateMode();
     renderedRef = selected;
+}
+function markResourceChoice() {
+    for (const button of $("resources").children) {
+        const selected = button.getAttribute("data-resource-ref") === selectedResourceRef;
+        button.setAttribute("aria-pressed", selected ? "true" : "false");
+        button.textContent = (selected ? "已选 · " : "") + button.getAttribute("data-resource-label");
+    }
+}
+function chooseResource(ref) {
+    if (destroyed || busy || catalogLoading || catalogFailure) return;
+    if (ref && !catalog.assets[ref]) { status("该资源已不在目录中，请刷新后明确选择。"); return; }
+    resourceChoice = { key: currentSelectionKey(), revision: ++editRevision };
+    explicitResourceRef = selectedResourceRef = ref;
+    if (!ref) $("displayName").value = "";
+    assetFields(); renderedRef = ref;
+    markResourceChoice();
 }
 async function persistCatalog(next) {
     author.validateMetadata(next);
@@ -268,7 +293,7 @@ async function primaryAction() {
             let next = existing === null ? author.createMetadata() : author.validateMetadata(existing);
             await collision(doc, next);
             const bounds = await store.assertSupportedLayer(doc, layer);
-            const chosen = $("resources").value;
+            const chosen = selectedResourceRef;
             if (chosen) {
                 next = author.importResource(next, catalog, resource());
                 const marker = next.nodes[layer.id];
@@ -421,12 +446,6 @@ bind("export", async () => {
     const file = await fs.getFileForSaving("gameui-resources.json", { types: ["json"] }); if (!file) return;
     const text = JSON.stringify(output, null, 2); await file.write(text);
     if (await file.read() !== text) throw new Error("导出目录回读不一致。");
-});
-$("resources").addEventListener("change", () => {
-    resourceChoice = { key: currentSelectionKey(), revision: ++editRevision };
-    explicitResourceRef = $("resources").value || "";
-    if (!explicitResourceRef) $("displayName").value = "";
-    assetFields(); renderedRef = explicitResourceRef;
 });
 for (const id of ["displayName", "left", "top", "right", "bottom", "sampling", "targetWidth", "targetHeight"]) {
     const edited = () => fieldEdits.set(id, { key: currentSelectionKey(), revision: ++editRevision });

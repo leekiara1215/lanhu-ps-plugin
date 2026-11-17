@@ -359,6 +359,7 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         get textContent() { return this._text; }
         appendChild(child) { this.children.push(child); if (this.tag === "select" && this.children.length === 1) this.value = child.value; }
         setAttribute(name, value) { this[name] = value; }
+        getAttribute(name) { return this[name] === undefined ? null : this[name]; }
         addEventListener(name, callback) { this.listeners[name] = callback; }
     }
     const html = fs.readFileSync(path.join(__dirname, "Panel/index.html"), "utf8");
@@ -437,7 +438,11 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         async getFileForOpening() { return { async read() { return JSON.stringify(startup.importDirectory || author.directory(fixture().metadata)); } }; } } } };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "Panel/panel.js"), "utf8"), {
         document: { getElementById(id) { assert.ok(elements[id], id); return elements[id]; }, createElement(tag) { return new Element(tag); },
-            querySelectorAll(tag) { return Object.values(elements).filter(element => element.tag === tag); } },
+            querySelectorAll(tag) {
+                const all = Object.values(elements);
+                for (let i = 0; i < all.length; i++) all.push(...all[i].children);
+                return all.filter(element => element.tag === tag);
+            } },
         console, require(name) {
             if (name === "photoshop") return env.photoshop; if (name === "uxp") return uxp;
             if (name === "./gameui-ps.js") return env.store; if (name === "./gameui-authoring.js") return author;
@@ -448,6 +453,11 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     return { ...env, elements, file, releaseCatalog, entrypoints,
         async notify(name = "select") { if (notification) await notification(name, {}); },
         async click(id) { await elements[id].listeners.click(); },
+        chosenResource() { return elements.resources.children.find(row => row.getAttribute("aria-pressed") === "true")?.getAttribute("data-resource-ref"); },
+        chooseResource(ref) {
+            const row = elements.resources.children.find(row => row.getAttribute("data-resource-ref") === ref);
+            assert.ok(row, "Resource row must exist: " + ref); row.listeners.click();
+        },
         async metadata() { return clone((await env.store.readMetadata(env.doc.id)).metadata); } };
 }
 
@@ -610,7 +620,7 @@ test("panel directory import stays private and referencing adds only the selecte
     const env = await panelHarness(JSON.stringify(library));
     await env.click("initialize");
     assert.deepEqual((await env.metadata()).assets, {});
-    env.elements.resources.value = ref;
+    env.chooseResource(ref);
     await env.click("reference");
     const value = await env.metadata();
     assert.deepEqual(Object.keys(value.assets), [ref]);
@@ -692,16 +702,15 @@ test("panel distinguishes existing and imported same-name same-version options w
     for (const imported of [false, true]) {
         const env = imported ? await panelHarness(undefined, undefined, { importDirectory: library }) : await panelHarness(JSON.stringify(library));
         if (imported) await env.click("import");
-        const items = env.elements.resources.children.filter(item => item.value);
+        const items = env.elements.resources.children.filter(item => item.getAttribute("data-resource-ref"));
         assert.equal(items.length, 3);
-        const first = items.find(item => item.value === ref), second = items.find(item => item.value === secondRef);
+        const first = items.find(item => item.getAttribute("data-resource-ref") === ref), second = items.find(item => item.getAttribute("data-resource-ref") === secondRef);
         assert.notEqual(first.textContent, second.textContent);
         assert.match(first.textContent, /条目 [1-3]$/); assert.match(second.textContent, /条目 [1-3]$/);
-        assert.equal(items.find(item => item.value === uniqueRef).textContent, "唯一名称 · v1");
-        assert.deepEqual(items.map(item => item.value).sort(), [ref, secondRef, uniqueRef].sort());
+        assert.equal(items.find(item => item.getAttribute("data-resource-ref") === uniqueRef).textContent, "唯一名称 · v1");
+        assert.deepEqual(items.map(item => item.getAttribute("data-resource-ref")).sort(), [ref, secondRef, uniqueRef].sort());
         await env.click("initialize");
-        env.elements.resources.value = secondRef;
-        env.elements.resources.listeners.change();
+        env.chooseResource(secondRef);
         assert.ok(env.elements.resourceInfo.textContent.replace(/\n/g, "").includes(secondRef));
         await env.click("reference");
         const value = await env.metadata();
@@ -726,7 +735,7 @@ test("primary action initializes and creates from source64 before applying the c
     const env = await panelHarness();
     const raw = primarySource64(env);
     env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
-    assert.equal(env.elements.resources.value, "");
+    assert.equal(env.chosenResource(), "");
     await env.click("primaryAction");
     const value = await env.metadata();
     assert.ok(value && value.nodes[10], env.elements.status.textContent);
@@ -736,7 +745,7 @@ test("primary action initializes and creates from source64 before applying the c
     assert.equal(value.authoring.targets[marker.nodeId].width, 128); assert.equal(value.authoring.targets[marker.nodeId].height, 80);
     assert.equal(env.layer.boundsNoEffects.right - env.layer.boundsNoEffects.left, 128);
     assert.equal(env.state.history.length, 1); assert.equal(env.state.history[0].committed, true);
-    assert.equal(env.elements.resources.value, marker.assetRef);
+    assert.equal(env.chosenResource(), marker.assetRef);
     assert.equal(env.elements.newResourceSettings.style.display, "none");
     assert.match(env.elements.inheritedContract.textContent, /7\/5\/11\/9/);
     assert.match(env.elements.status.textContent, /Cmd\+S/);
@@ -757,7 +766,7 @@ test("primary action references an explicitly chosen resource in a second unmark
     second.layers = [layer]; second.activeLayers = [layer];
     env.photoshop.app.documents.push(second); env.photoshop.app.activeDocument = second;
     await env.notify("open");
-    assert.equal(env.elements.resources.value, ref, "An already explicit resource choice may carry to the next unbound instance.");
+    assert.equal(env.chosenResource(), ref, "An already explicit resource choice may carry to the next unbound instance.");
     assert.equal(env.elements.targetWidth.value, "64"); assert.equal(env.elements.targetHeight.value, "48");
     assert.match(env.elements.targetHint.textContent, /非空边界/);
     env.elements.targetWidth.value = "192"; env.elements.targetHeight.value = "96";
@@ -795,7 +804,7 @@ test("primary action failure rolls back pixels and XMP in one history step and p
 test("primary action rejects same-name creation and unsafe existing metadata without overwriting or guessing a first resource", async () => {
     const { metadata } = fixture();
     const env = await panelHarness(JSON.stringify(author.directory(metadata)));
-    assert.equal(env.elements.resources.value, "");
+    assert.equal(env.chosenResource(), "");
     env.elements.displayName.value = "  " + options.displayName + "  ";
     const before = env.file.text;
     await env.click("primaryAction");
@@ -831,7 +840,7 @@ test("selection notifications refresh only document or layer identity and preser
     await env.notify("select");
     assert.match(env.elements.selection.textContent, /new-layer/);
     assert.equal(env.elements.targetWidth.value, "24"); assert.equal(env.elements.targetHeight.value, "16");
-    assert.equal(env.elements.resources.value, "");
+    assert.equal(env.chosenResource(), "");
     await env.click("toggleAdvanced");
     assert.equal(env.elements.advancedPanel.style.display, "block");
     await env.click("toggleAdvanced"); assert.equal(env.elements.advancedPanel.style.display, "none");
@@ -863,10 +872,10 @@ test("selection notifications skip while the primary action is busy and bound la
     release(); await action;
     const value = await env.metadata(), ref = value.nodes[10].assetRef;
     assert.match(env.elements.selection.textContent, /other/);
-    assert.equal(env.elements.resources.value, ref);
-    env.elements.resources.value = ""; env.elements.resources.listeners.change();
+    assert.equal(env.chosenResource(), ref);
+    env.chooseResource("");
     env.doc.activeLayers = [env.layer]; await env.notify("select");
-    assert.equal(env.elements.resources.value, ref); assert.equal(env.elements.targetWidth.value, "128");
+    assert.equal(env.chosenResource(), ref); assert.equal(env.elements.targetWidth.value, "128");
     assert.equal(env.elements.targetHeight.value, "80");
 });
 
@@ -918,7 +927,7 @@ test("selection refresh preserves edited fields while untouched fields inherit t
     read.release(); await pending;
     assert.equal(env.elements.targetWidth.value, "123");
     assert.equal(env.elements.targetHeight.value, "5", "Untouched fields still receive the selected instance defaults.");
-    assert.equal(env.elements.resources.value, value.nodes[20].assetRef);
+    assert.equal(env.chosenResource(), value.nodes[20].assetRef);
     assert.equal(env.elements.displayName.value, "尚未发布的名称");
     assert.equal(env.elements.left.value, "2"); assert.equal(env.elements.sampling.value, "Bilinear");
     assert.equal(env.elements.right.value, String(value.assets[value.nodes[20].assetRef].nineSlice.right));
@@ -926,7 +935,7 @@ test("selection refresh preserves edited fields while untouched fields inherit t
     assert.equal(env.file.text, JSON.stringify(author.directory(value)));
 });
 
-test("selection refresh preserves an explicit new-resource choice made while XMP is pending", async () => {
+test("selection refresh blocks resource clicks while pending and accepts explicit new choice when idle", async () => {
     const { metadata } = fixture();
     const value = author.copyNode(metadata, 10, 20);
     const env = await panelHarness(JSON.stringify(author.directory(value)), value);
@@ -934,10 +943,13 @@ test("selection refresh preserves an explicit new-resource choice made while XMP
     env.doc.layers.push(other); env.doc.activeLayers = [other];
     const [read] = pauseMetadataReads(env, 1);
     const pending = env.notify(); await read.arrived;
-    env.elements.resources.value = ""; env.elements.resources.listeners.change();
-    env.elements.displayName.value = "新资源草稿"; env.elements.displayName.listeners.input?.();
+    env.chooseResource("");
+    assert.equal(env.chosenResource(), value.nodes[10].assetRef);
+    assert.ok(env.elements.resources.children.every(row => row.disabled));
     read.release(); await pending;
-    assert.equal(env.elements.resources.value, "");
+    env.chooseResource("");
+    env.elements.displayName.value = "新资源草稿"; env.elements.displayName.listeners.input?.();
+    assert.equal(env.chosenResource(), "");
     assert.equal(env.elements.displayName.value, "新资源草稿");
     assert.equal(env.elements.newResourceSettings.style.display, "block");
     assert.deepEqual(await env.metadata(), value);
@@ -975,4 +987,56 @@ test("selection refresh handles closing the document and ignores pending results
         assert.equal(env.state.history.length, 0);
         assert.equal(env.file.text, undefined);
     }
+});
+
+test("inline resource rows choose the exact last version without writing PSD and retain rows on unchanged refresh", async () => {
+    const { metadata, source } = fixture();
+    let library = metadata;
+    for (let index = 0; index < 24; index++) {
+        library = author.define(library, 100 + index, { ...options, assetKey: "ui.catalog-" + String(index).padStart(2, "0") }, source);
+    }
+    library = author.directory(library);
+    const env = await panelHarness(JSON.stringify(library));
+    const rows = env.elements.resources.children.slice();
+    assert.equal(env.elements.resources.tag, "div", "Resource choices must use in-panel controls, not a native select popup.");
+    assert.equal(rows.length, 26);
+    assert.equal(rows[0].getAttribute("data-resource-ref"), "");
+    assert.equal(env.chosenResource(), "");
+    assert.ok(rows.every(row => row.tag === "button" && row.getAttribute("type") === "button" && !row.disabled));
+    assert.match(env.elements.resourceCount.textContent, /^25 个资源版本/);
+    const lastRef = rows.at(-1).getAttribute("data-resource-ref");
+    env.elements.targetWidth.value = "192"; env.elements.targetHeight.value = "96";
+    env.chooseResource(lastRef);
+    assert.equal(env.chosenResource(), lastRef);
+    assert.equal(rows.filter(row => row.getAttribute("aria-pressed") === "true").length, 1);
+    assert.match(rows.at(-1).textContent, /^已选 · /);
+    assert.equal(env.elements.targetWidth.value, "192"); assert.equal(env.elements.targetHeight.value, "96");
+    await env.click("refresh");
+    assert.ok(env.elements.resources.children.every((row, index) => row === rows[index]), "Unchanged choices retain their mounted buttons and scroll container.");
+    env.chooseResource("");
+    assert.equal(env.chosenResource(), ""); assert.match(rows[0].textContent, /^已选 · 新建公共资源$/);
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, JSON.stringify(library));
+    assert.equal(env.state.history.length, 0);
+});
+
+test("inline resource rows cannot change the chosen version while primary action is applying pixels", async () => {
+    const { metadata, source, ref } = fixture();
+    const library = author.directory(author.define(metadata, 20, { ...options, assetKey: "ui.other" }, source));
+    const env = await panelHarness(JSON.stringify(library));
+    env.chooseResource(ref);
+    let release, arrived;
+    const gate = new Promise(resolve => { release = resolve; });
+    const applying = new Promise(resolve => { arrived = resolve; });
+    const original = env.photoshop.imaging.putPixels;
+    env.photoshop.imaging.putPixels = async value => { arrived(); await gate; return original(value); };
+    const pending = env.click("primaryAction"); await applying;
+    assert.ok(env.elements.resources.children.every(row => row.disabled));
+    env.chooseResource("ui.other@1");
+    assert.equal(env.chosenResource(), ref);
+    release(); await pending;
+    assert.equal((await env.metadata()).nodes[10].assetRef, ref);
+    assert.ok(env.elements.resources.children.every(row => !row.disabled));
+    env.chooseResource("ui.other@1");
+    assert.equal(env.chosenResource(), "ui.other@1");
+    assert.equal((await env.metadata()).nodes[10].assetRef, ref, "Choosing another row alone must not write a binding.");
 });

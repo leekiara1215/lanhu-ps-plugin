@@ -2,7 +2,7 @@
   "manifestVersion": 5,
   "id": "com.bettagames.gameui.authoring.test",
   "name": "GameUI Authoring · 隔离试用",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "main": "index.html",
   "host": { "app": "PS", "minVersion": "25.0.0", "data": { "apiVersion": 2 } },
   "requiredPermissions": { "localFileSystem": "request" },
