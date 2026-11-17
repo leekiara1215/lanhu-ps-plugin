@@ -298,3 +298,82 @@ test("Lanhu project guard accepts projectID alias and rejects conflicting aliase
     assert.throws(() => guard({ projectID: "other" }), { code: "LANHU_PROJECT_NOT_ALLOWED" });
     assert.equal(env.state.uploads, 0);
 });
+
+function nativeFixture() {
+    const env = fixture(), calls = [];
+    const state = { userInfo: { token: "" }, projectInfo: {}, setting: { artboardType: 1 },
+        artboards: { allArtboard: [{ id: "10", name: "真实画板" }], selectedArtboard: [] } };
+    env.vm.$store = { state, async dispatch(name, value) {
+        calls.push({ name, value });
+        if (name === "loginSuccess") Object.assign(state.userInfo, value);
+        if (name === "loginOut") state.userInfo = { token: "" };
+        if (name === "projectInfoClear") state.projectInfo = {};
+        if (name === "modifyProjecInfo") Object.assign(state.projectInfo, value);
+        if (name === "modifySetting") Object.assign(state.setting, value);
+    } };
+    env.vm.$router = { currentRoute: { name: "home" }, async push(route) { calls.push({ route }); this.currentRoute = route; } };
+    const services = env.vm.$gameuiServices = {
+        auth: { async login(value) { calls.push({ login: value }); return { code: "00000", token: "PRIVATE_SESSION", email: value.email }; }, async checkToken() { return { code: "00000" }; } },
+        account: { async getPluginUserTeams() { return { code: "00000", result: [{ id: "team", name: "团队", secret: "NOT_FOR_UI" }] }; } },
+        project: { async getAllProjects() { return { code: "00000", result: [{ id: PROJECT, name: "测试项目" }, { id: "other", name: "其他项目" }] }; }, async searchGroup() { return [{ id: "group", label: "设计分组" }]; } },
+        scales: { Web: [{ label: "@1x", value: "网页" }] }, sliceScales: { Web: { "@1x": "2" } }
+    };
+    env.vm.$lanhuApi = { async sliceWithLayer() { calls.push({ slice: true }); } };
+    return { ...env, calls, data: state, services };
+}
+
+test("native workspace uses real account/project adapters and exposes an allowlisted snapshot without credentials", async () => {
+    const env = nativeFixture(); await env.host.connect();
+    await env.host.perform("login", { account: " test@example.com ", password: "PRIVATE_PASSWORD" });
+    assert.equal(env.host.workspace().loggedIn, true);
+    assert.equal(env.host.workspace().userName, "test@example.com");
+    assert.deepEqual(env.host.workspace().teams, [{ id: "team", name: "团队" }]);
+    assert.doesNotMatch(JSON.stringify(env.host.workspace()), /PRIVATE_|NOT_FOR_UI/);
+    await env.host.perform("team", "team");
+    assert.equal(env.host.workspace().projects.length, 2);
+    await assert.rejects(env.host.perform("project", "other"), { code: "LANHU_PROJECT_NOT_ALLOWED" });
+    assert.equal(env.data.projectInfo.projectId, "");
+    await env.host.perform("project", PROJECT);
+    await env.host.perform("group", "group");
+    assert.equal(env.host.workspace().groupId, "group");
+    await env.host.perform("settings", { deviceType: "Web", deviceScale: "@1x", artboardType: 2 });
+    assert.equal(env.data.setting.sliceScale, "2");
+    assert.equal(env.host.workspace().selectedArtboards.length, 0);
+    assert.deepEqual(env.host.workspace().allArtboards, [{ id: "10", name: "真实画板" }]);
+    assert.equal(env.state.uploads, 0); assert.equal(env.state.modalCalls.length, 0, "Login, project and settings must not mutate PSD.");
+    await env.host.perform("logout"); assert.equal(env.host.workspace().loggedIn, false);
+    assert.deepEqual(env.host.workspace().teams, []);
+    await env.host.destroy(); assert.equal(env.state.timers.size, 0);
+});
+
+test("native workspace rejects failed auth, invalid settings and unknown groups without dispatching changes", async () => {
+    const env = nativeFixture(); await env.host.connect();
+    env.services.auth.login = async () => ({ code: "10002", msg: "do not echo private server text" });
+    await assert.rejects(env.host.perform("login", { account: "test", password: "PRIVATE" }), /登录失败/);
+    assert.equal(env.calls.length, 0);
+    await assert.rejects(env.host.perform("settings", { deviceType: "Web", deviceScale: "@8x", artboardType: 1 }), { code: "LANHU_SETTING_INVALID" });
+    await assert.rejects(env.host.perform("group", "missing"), { code: "LANHU_GROUP_UNAVAILABLE" });
+    assert.equal(env.calls.length, 0);
+    await env.host.perform("settings", { deviceType: "", deviceScale: "", artboardType: 2 });
+    assert.equal(env.data.setting.artboardType, 2, "Board scope can be set before design scale, as in the original workflow.");
+    assert.equal(env.state.uploads, 0); assert.equal(env.state.modalCalls.length, 0);
+});
+
+test("native controls follow actual upload progress and block settings, slices and a second upload until completion", async () => {
+    const env = nativeFixture(); await env.host.connect();
+    env.data.userInfo.token = "PRIVATE"; env.data.projectInfo.projectId = PROJECT;
+    await assert.rejects(env.host.upload(), { code: "LANHU_DESIGN_SCALE_REQUIRED" });
+    env.data.setting.deviceType = "Web"; env.data.setting.deviceScale = "@1x";
+    const progress = { uploadArtboards() {}, UploadStatusConfig: { uploading: 1, success: 2, fail: 3, unChange: 4 }, uploadStatus: 1,
+        percentage: 24, totalCount: 2, successCount: 0, failCount: 0 };
+    env.home.uploadArtboard = async () => { env.state.uploads++; env.vm.$children.push(progress); env.vm.$router.currentRoute = { name: "upload" }; };
+    await env.host.upload();
+    assert.deepEqual(env.host.workspace().upload, { phase: "uploading", percentage: 24, total: 2, success: 0, fail: 0 });
+    for (const name of ["refresh", "logout", "sliceWithLayer", "settings"]) await assert.rejects(env.host.perform(name, {}), { code: "LANHU_HOST_BUSY" });
+    await assert.rejects(env.host.upload(), { code: "LANHU_HOST_BUSY" });
+    assert.equal(env.state.uploads, 1);
+    progress.uploadStatus = 2; progress.percentage = 100; progress.successCount = 2;
+    assert.equal(env.host.workspace().upload.phase, "success");
+    await env.host.perform("back"); assert.equal(env.vm.$router.currentRoute.name, "home");
+    assert.equal(env.state.modalCalls.length, 0);
+});

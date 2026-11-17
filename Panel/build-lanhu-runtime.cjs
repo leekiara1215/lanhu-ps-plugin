@@ -42,8 +42,13 @@ function prepareRuntime(plugin) {
     const sliceBoundary = 't.getSelectArtBoard=function';
     const sliceWrappers = '["sliceWithLayer","sliceWithGroup","unSlice","showSlice","hiddenSlice"].forEach(function(name){var original=t[name];t[name]=function(){var self=this,args=arguments;return gameuiHost.runModal(function(){return original.apply(self,args)})}}),';
     source = replaceOnce(source, sliceBoundary, sliceWrappers + sliceBoundary);
+    source = replaceOnce(source, 'M.prototype.showSlice=function(){(0,N.showSlice)()},M.prototype.hiddenSlice=function(){(0,N.hiddenSlice)()}', 'M.prototype.showSlice=function(){return(0,N.showSlice)()},M.prototype.hiddenSlice=function(){return(0,N.hiddenSlice)()}');
     source = replaceOnce(source, 'console.clear(),window.alert', 'void 0,window.alert');
     source = replaceOnce(source, 'window.crypto||(window.crypto=', 'crypto=window.crypto||(window.crypto=');
+    // Expose only the pinned business adapters to our own UXP controls. The legacy
+    // view stays hidden; it continues to own the audited upload state machine.
+    const bootstrap = 'window.VM=new k.default({router:q(),store:MM(),render:function(M){return M(X)}}).$mount("#app")';
+    source = replaceOnce(source, bootstrap, bootstrap + ',window.VM.$gameuiServices={auth:e(62824),account:e(62909),project:e(78578),scales:e(94878).DeviceScaleDic,sliceScales:e(94878).SelectScaleConfig}');
     // The factory is lazy. Loading this module does not bootstrap Vue, read a session or access the network.
     const runtime = '"use strict";\nmodule.exports = function(gameuiHost) {\n'
         + 'const window=gameuiHost.window,document=gameuiHost.document,localStorage=gameuiHost.localStorage,require=gameuiHost.require,self=window,globalThis=window;\n'
@@ -53,7 +58,7 @@ function prepareRuntime(plugin) {
     return { runtime, identity: { schemaVersion: 1, officialId: manifest.id, officialVersion: manifest.version,
         officialManifestSha256: sha(manifestBytes), officialIndexSha256: sha(bytes), runtimeSha256: sha(runtime),
         projectId: compatibility.projectId, format: "lazy-scoped-vue-factory", apiVersion: 2,
-        seams: ["analysis modal/project guard", "capture", "finalize", "Home upload project guard", "uploader project guard", "submit project guard", "slice API modal", "slice group promise ownership", "console preservation", "scoped crypto fallback"] } };
+        seams: ["analysis modal/project guard", "capture", "finalize", "Home upload project guard", "uploader project guard", "submit project guard", "slice API modal", "slice group promise ownership", "slice visibility promise ownership", "console preservation", "scoped crypto fallback", "native workspace business adapters"] } };
 }
 
 module.exports = { prepareRuntime };

@@ -2,7 +2,7 @@
 
 const TEST_PROJECT_ID = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
 
-function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire, onStatus = () => {} }) {
+function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire, onStatus = () => {}, onChange = () => {} }) {
     let vm = null;
     let operation = null;
     let destroyed = false;
@@ -13,6 +13,105 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     const timers = new Set();
     const photoshopListeners = new Set();
     const ownErrors = new WeakSet();
+    let teams = [], projects = [], groups = [];
+
+    function workspace() {
+        const state = vm && vm.$store && vm.$store.state || {};
+        const user = state.userInfo || {}, project = state.projectInfo || {}, setting = state.setting || {};
+        const boards = state.artboards || {}, services = vm && vm.$gameuiServices;
+        const list = values => (Array.isArray(values) ? values : []).map(item => ({ id: String(item.id), name: String(item.name || item.label || "未命名") }));
+        const progress = components().find(item => typeof item.uploadArtboards === "function" && item.UploadStatusConfig);
+        let upload = null;
+        if (progress) {
+            const config = progress.UploadStatusConfig;
+            const phase = progress.uploadStatus === config.uploading ? "uploading" : progress.uploadStatus === config.success ? "success" : progress.uploadStatus === config.fail ? "fail" : progress.uploadStatus === config.unChange ? "unchanged" : "unknown";
+            upload = { phase, percentage: Number.isFinite(progress.percentage) ? progress.percentage : 0,
+                total: Number(progress.totalCount) || 0, success: Number(progress.successCount) || 0, fail: Number(progress.failCount) || 0 };
+        }
+        return { ...status(), userName: String(user.nickname || user.name || user.email || ""),
+            teamId: String(project.teamId || ""), projectName: String(project.projectName || ""), groupId: String(project.groupId || ""),
+            teams: list(teams), projects: list(projects), groups: list(groups),
+            deviceType: String(setting.deviceType || ""), deviceScale: String(setting.deviceScale || ""),
+            scales: services && services.scales || {}, artboardType: Number(setting.artboardType) || 1,
+            allArtboards: list(boards.allArtboard), selectedArtboards: list(boards.selectedArtboard), upload };
+    }
+    function services() {
+        if (!vm || !vm.$gameuiServices || !vm.$store) reject("LANHU_ADAPTER_UNAVAILABLE", "蓝湖业务模块尚未就绪，请刷新连接或使用最新集成候选。");
+        return vm.$gameuiServices;
+    }
+    function checkResponse(response, message) {
+        if (!response || (response.code !== undefined && !["00000", "0"].includes(String(response.code)))) {
+            reject("LANHU_SERVICE_REJECTED", message + "，请检查账号权限和网络后重试。");
+        }
+        return response;
+    }
+    async function refreshWorkspace() {
+        const api = services(), state = vm.$store.state;
+        await vm.$store.dispatch("refreshArtBoard");
+        if (status().loggedIn) {
+            teams = [];
+            projects = [];
+            groups = [];
+            teams = checkResponse(await api.account.getPluginUserTeams(state.userInfo.token), "读取团队失败").result || [];
+            if (state.projectInfo.teamId) projects = checkResponse(await api.project.getAllProjects({ team_id: state.projectInfo.teamId, token: state.userInfo.token }), "读取项目失败").result || [];
+            if (state.projectInfo.projectId === TEST_PROJECT_ID) groups = await api.project.searchGroup({ teamId: state.projectInfo.teamId, projectId: TEST_PROJECT_ID, token: state.userInfo.token });
+        }
+        return workspace();
+    }
+    async function perform(name, value) {
+        ready();
+        const api = services();
+        operation = name;
+        try {
+            const state = vm.$store.state;
+            if (name === "refresh") return await refreshWorkspace();
+            if (name === "login") {
+                if (!value || !String(value.account || "").trim() || !value.password) reject("LANHU_LOGIN_REQUIRED", "请填写蓝湖账号和密码。");
+                const response = checkResponse(await api.auth.login({ email: value.account.trim(), password: value.password, password_type: 0 }), "登录失败");
+                if (!response.token) reject("LANHU_LOGIN_FAILED", "登录未返回有效会话，请检查账号和密码。");
+                await vm.$store.dispatch("loginSuccess", { token: response.token, email: response.email, phone: response.mobile, nickname: response.nickname, avatar: response.avatar });
+                await vm.$router.push({ name: "home" });
+                await refreshWorkspace();
+                notify("蓝湖已登录，请选择团队与测试项目。");
+            } else if (name === "logout") {
+                await vm.$store.dispatch("loginOut");
+                await vm.$store.dispatch("projectInfoClear");
+                teams = []; projects = []; groups = [];
+                await vm.$router.push({ name: "login" });
+                notify("已退出蓝湖账号。");
+            } else if (name === "team") {
+                const team = teams.find(item => String(item.id) === value);
+                if (!team) reject("LANHU_TEAM_UNAVAILABLE", "请刷新并选择有效团队。");
+                checkResponse(await api.auth.checkToken(state.userInfo.token, team.id), "当前团队需要重新授权");
+                await vm.$store.dispatch("modifyProjecInfo", { teamId: team.id, teamInfo: { ...team }, teamName: team.name, projectId: "", projectName: "", groupId: "", groupName: "" });
+                await refreshWorkspace();
+            } else if (name === "project") {
+                const project = projects.find(item => String(item.id) === value);
+                if (!project || value !== TEST_PROJECT_ID) reject("LANHU_PROJECT_NOT_ALLOWED", "当前仅允许选择隔离测试项目；其他项目暂不可上传。");
+                await vm.$store.dispatch("modifyProjecInfo", { projectId: project.id, projectName: project.name, groupId: "", groupName: "" });
+                await refreshWorkspace();
+            } else if (name === "group") {
+                const group = groups.find(item => String(item.id) === value);
+                if (value && !group) reject("LANHU_GROUP_UNAVAILABLE", "请刷新并选择有效分组。");
+                await vm.$store.dispatch("modifyProjecInfo", { groupId: value, groupName: group ? group.label : "" });
+            } else if (name === "settings") {
+                const device = value.deviceType, scale = value.deviceScale;
+                if (![1, 2].includes(value.artboardType) || ((device || scale) && (!api.scales[device] || !api.scales[device].some(item => item.label === scale)))) reject("LANHU_SETTING_INVALID", "请选择有效的平台、设计倍数和画板范围。");
+                await vm.$store.dispatch("modifySetting", device ? { deviceType: device, deviceScale: scale, sliceScale: api.sliceScales[device][scale], artboardType: value.artboardType } : { artboardType: value.artboardType });
+                await vm.$store.dispatch("refreshArtBoard");
+            } else if (name === "back") {
+                await vm.$router.push({ name: "home" });
+            } else if (["sliceWithLayer", "sliceWithGroup", "unslice", "showSlice", "hiddenSlice"].includes(name)) {
+                if (!vm.$lanhuApi || typeof vm.$lanhuApi[name] !== "function") reject("LANHU_SLICE_UNAVAILABLE", "当前候选不支持此切图操作。");
+                await vm.$lanhuApi[name]();
+                notify("切图操作已完成；请检查当前选层，正常保存由你决定。");
+            } else reject("LANHU_ACTION_UNKNOWN", "此操作尚未接入。");
+            return workspace();
+        } catch (cause) {
+            if (ownErrors.has(cause)) throw cause;
+            reject("LANHU_ACTION_FAILED", "蓝湖操作未完成，请检查网络、账号权限和当前文档后重试。", cause);
+        } finally { operation = null; if (!destroyed) onChange(); }
+    }
 
     function notify(message) { if (!destroyed) onStatus(message); }
     function error(code, message, cause) {
@@ -323,6 +422,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             }
             if (!instance || typeof instance !== "object") throw error("LANHU_RUNTIME_INVALID", "蓝湖界面未完成初始化，请重新连接工具。");
             vm = instance;
+            if (typeof context.setInterval === "function") context.setInterval(() => onChange(), 750);
             notify("蓝湖工具已加载，请登录并选择测试项目。");
             return status();
         } catch (cause) {
@@ -346,8 +446,18 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             catch (cause) { reject("LANHU_AUTH_UNAVAILABLE", "无法读取蓝湖登录状态，请重新登录。", cause); }
             if (!loggedIn) reject("LANHU_LOGIN_REQUIRED", "请先在蓝湖工具中登录。");
             assertUploadAllowed(home);
+            if (vm.$gameuiServices) {
+                const state = vm.$store.state, setting = state.setting || {}, boards = state.artboards || {};
+                if (!setting.deviceType || !setting.deviceScale) reject("LANHU_DESIGN_SCALE_REQUIRED", "请先选择平台与设计倍数。");
+                const selected = Number(setting.artboardType) === 2 ? boards.selectedArtboard : boards.allArtboard;
+                if (!Array.isArray(selected) || !selected.length) reject("LANHU_ARTBOARDS_REQUIRED", "当前范围没有画板，请调整选区并刷新。");
+            }
             await home.uploadArtboard();
             if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+            if (vm.$gameuiServices && !pipelineBusy()) {
+                const dialog = components().find(item => item.dialogPluginErrVisible && typeof item.pluginErrMessage === "string");
+                reject("LANHU_UPLOAD_NOT_STARTED", dialog ? dialog.pluginErrMessage : "蓝湖尚未进入上传流程，请检查团队权限、设计倍数和画板后重试。");
+            }
             notify("已交给蓝湖上传流程，请在蓝湖工具中查看后续结果。");
             return { ...status(), uploading: pipelineBusy() };
         } catch (cause) {
@@ -372,7 +482,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     async function openOfficial() {
         reject("LANHU_OFFICIAL_OPEN_UNAVAILABLE", "当前构建尚未接入打开官方蓝湖面板，请从 Photoshop 增效工具菜单打开。");
     }
-    return { connect, upload, status, destroy, openOfficial };
+    return { connect, upload, status, workspace, perform, destroy, openOfficial };
 }
 
 module.exports = { createLanhuHost };

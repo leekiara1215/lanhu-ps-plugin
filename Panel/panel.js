@@ -31,16 +31,78 @@ let activeTab = "authoring";
 let inlineLanhuOpen = false;
 
 function lanhuMessage(message) {
+    if (destroyed) return;
     $("lanhuStatus").textContent = message;
     $("authoringLanhuStatus").textContent = message;
 }
+const TEST_PROJECT_ID = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
+let boardScope = 1;
+function lanhuView() {
+    return typeof lanhuHost.workspace === "function" ? lanhuHost.workspace() : { ...lanhuHost.status(), teams: [], projects: [], groups: [], allArtboards: [], selectedArtboards: [], scales: {} };
+}
+function fillSelect(id, rows, selected, placeholder) {
+    const select = $(id), signature = JSON.stringify([rows, selected, placeholder]);
+    if (select.workspaceSignature === signature) return;
+    select.textContent = "";
+    for (const row of [{ id: "", name: placeholder }, ...rows]) {
+        const option = document.createElement("option"); option.value = row.id; option.textContent = row.name;
+        if (row.disabled) option.disabled = true;
+        select.appendChild(option);
+    }
+    select.value = selected || ""; select.workspaceSignature = signature;
+}
 function updateLanhuControls(syncStatus = false) {
     const state = lanhuHost && lanhuHost.status();
-    $("authoringUploadLanhu").disabled = busy || lanhuBusy || !state || !state.connected || state.uploading || !state.loggedIn;
-    $("connectLanhu").disabled = busy || lanhuBusy;
+    const locked = busy || lanhuBusy || !!(state && state.uploading);
+    const canUpload = state && state.connected && state.loggedIn && state.projectId === TEST_PROJECT_ID;
+    $("authoringUploadLanhu").disabled = locked || !canUpload;
+    $("lanhuUploadAction").disabled = locked || !canUpload || !$("lanhuDevice").value || !$("lanhuScale").value;
+    $("connectLanhu").disabled = locked;
+    $("lanhuLoginAction").disabled = locked || !!(state && state.loggedIn);
+    $("lanhuLogout").disabled = locked || !state || !state.loggedIn;
+    for (const id of ["lanhuTeam", "lanhuProject", "lanhuGroup"]) $(id).disabled = locked || !state || !state.loggedIn;
+    for (const id of ["lanhuDevice", "lanhuScale", "lanhuBoardsAll", "lanhuBoardsSelected", "lanhuSliceLayer", "lanhuSliceGroup", "lanhuUnslice", "lanhuShowSlices", "lanhuHideSlices", "lanhuBack"]) $(id).disabled = locked || !state || !state.connected;
     if (syncStatus && state && state.connected && !lanhuBusy) {
-        lanhuMessage(state.loggedIn ? "蓝湖已登录；当前项目：" + (state.projectId || "尚未选择") : "蓝湖已加载，请在蓝湖工具页登录并选择测试项目。");
+        lanhuMessage(state.loggedIn ? "蓝湖已登录；请选择团队、测试项目和画板。" : "请使用蓝湖账号登录。");
     }
+}
+function renderLanhuWorkspace() {
+    if (destroyed || !lanhuHost) return;
+    const view = lanhuView();
+    $("lanhuAccountSummary").textContent = view.loggedIn ? (view.userName || "已登录") : "未登录";
+    $("lanhuLogin").style.display = view.loggedIn ? "none" : "block";
+    fillSelect("lanhuTeam", view.teams || [], view.teamId, view.loggedIn ? "请选择团队" : "登录后选择团队");
+    fillSelect("lanhuProject", (view.projects || []).map(item => ({ ...item, disabled: item.id !== TEST_PROJECT_ID, name: item.name + (item.id === TEST_PROJECT_ID ? "（测试项目）" : "（当前不可上传）") })), view.projectId, "请选择测试项目");
+    fillSelect("lanhuGroup", view.groups || [], view.groupId, "项目根目录");
+    $("lanhuDevice").value = view.deviceType || "";
+    renderLanhuScales(view.deviceType, view.deviceScale, view.scales);
+    boardScope = view.artboardType || 1;
+    $("lanhuBoardsAll").textContent = "该页全部画板（" + (view.allArtboards || []).length + "）";
+    $("lanhuBoardsSelected").textContent = "选中画板（" + (view.selectedArtboards || []).length + "）";
+    $("lanhuBoardsAll").setAttribute("aria-pressed", boardScope === 1 ? "true" : "false");
+    $("lanhuBoardsSelected").setAttribute("aria-pressed", boardScope === 2 ? "true" : "false");
+    let doc; try { doc = ps.app.activeDocument; } catch (_) { /* No open PSD. */ }
+    $("lanhuDocument").textContent = "当前文档：" + (doc ? doc.title || doc.name || "未命名" : "未打开 PSD");
+    const boards = (boardScope === 2 ? view.selectedArtboards : view.allArtboards) || [];
+    const signature = JSON.stringify(boards);
+    if ($("lanhuBoardList").workspaceSignature !== signature) {
+        $("lanhuBoardList").textContent = boards.length ? "" : "暂无可上传画板，请打开文档或调整选区后刷新。";
+        for (const board of boards) {
+            const row = document.createElement("div"); row.className = "lanhu-board-row"; row.setAttribute("role", "listitem"); row.textContent = board.name; $("lanhuBoardList").appendChild(row);
+        }
+        $("lanhuBoardList").workspaceSignature = signature;
+    }
+    $("lanhuProgress").style.display = view.upload ? "block" : "none";
+    $("lanhuBack").style.display = view.upload && !view.uploading ? "block" : "none";
+    if (view.upload) {
+        const labels = { uploading: "正在上传", success: "蓝湖上传流程报告成功", fail: "上传失败", unchanged: "画板无变化" };
+        $("lanhuProgress").textContent = (labels[view.upload.phase] || "上传状态待确认") + "\n进度 " + view.upload.percentage + "% · 共 " + view.upload.total + " 项 · 成功 " + view.upload.success + " 项 · 失败 " + view.upload.fail + " 项";
+    }
+    updateLanhuControls();
+}
+function renderLanhuScales(device, selected, scales) {
+    const rows = scales && scales[device] || [];
+    fillSelect("lanhuScale", rows.map(item => ({ id: item.label, name: item.label + " · " + item.value })), selected, "请选择设计倍数");
 }
 function showTab(name) {
     activeTab = name;
@@ -49,50 +111,90 @@ function showTab(name) {
     $("tabAuthoring").setAttribute("aria-selected", name === "authoring" ? "true" : "false");
     $("tabLanhu").setAttribute("aria-selected", name === "lanhu" ? "true" : "false");
     positionLanhuMount();
-    updateLanhuControls(true);
+    renderLanhuWorkspace();
 }
 function positionLanhuMount() {
     const destination = $(activeTab === "authoring" && inlineLanhuOpen ? "authoringLanhuInline" : "lanhuFullMount");
-    const mount = $("lanhuMount");
-    if (mount.parentNode !== destination) destination.appendChild(mount);
+    const workspace = $("lanhuWorkspace");
+    if (workspace.parentNode !== destination) destination.appendChild(workspace);
 }
 lanhuHost = createLanhuHost({ ps, uxp, document, window: typeof window === "undefined" ? {} : window,
     nativeRequire: require,
     loadRuntime() {
         try { return require("./lanhu-runtime.js"); }
         catch (cause) {
-            const error = new Error("当前候选未包含蓝湖工具，请使用带蓝湖功能的集成候选。");
+            const error = new Error("当前候选未包含蓝湖业务模块，请使用带蓝湖功能的集成候选。");
             Object.defineProperty(error, "cause", { value: cause }); throw error;
         }
-    }, onStatus: lanhuMessage });
-async function connectLanhu() {
-    if (busy || lanhuBusy) return;
+    }, onStatus: lanhuMessage, onChange: renderLanhuWorkspace });
+async function lanhuTask(action) {
+    if (busy || lanhuBusy || lanhuHost.status().uploading) return;
     lanhuBusy = true; updateLanhuControls();
     try {
-        await lanhuHost.connect(); $("lanhuSetup").style.display = "none";
+        if (!lanhuHost.status().connected) { lanhuMessage("正在连接蓝湖服务…"); await lanhuHost.connect(); }
+        if (destroyed) return;
+        await action();
     } catch (error) { lanhuMessage(errorText(error)); }
-    finally { lanhuBusy = false; updateLanhuControls(); }
+    finally { lanhuBusy = false; renderLanhuWorkspace(); }
 }
+async function connectLanhu() { return lanhuTask(async () => {
+    if (typeof lanhuHost.perform === "function") await lanhuHost.perform("refresh");
+    lanhuMessage(lanhuHost.status().loggedIn ? "账号与项目已刷新。" : "请使用蓝湖账号登录。");
+}); }
 async function uploadLanhu() {
-    if (busy || lanhuBusy) return;
-    lanhuBusy = true; updateLanhuControls();
-    try { await lanhuHost.upload(); if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); }
-    catch (error) { if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); lanhuMessage(errorText(error)); }
-    finally { lanhuBusy = false; updateLanhuControls(); }
+    return lanhuTask(async () => {
+        await lanhuHost.upload();
+        if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu");
+    });
+}
+function openLanhuWorkspace() {
+    showTab("lanhu");
+    if (!lanhuHost.status().connected) return connectLanhu();
 }
 $("tabAuthoring").addEventListener("click", () => showTab("authoring"));
-$("tabLanhu").addEventListener("click", () => showTab("lanhu"));
-$("authoringOpenLanhu").addEventListener("click", () => showTab("lanhu"));
+$("tabLanhu").addEventListener("click", openLanhuWorkspace);
+$("authoringOpenLanhu").addEventListener("click", openLanhuWorkspace);
 $("authoringToggleLanhu").addEventListener("click", async () => {
     inlineLanhuOpen = !inlineLanhuOpen;
     $("authoringLanhuInline").style.display = inlineLanhuOpen ? "block" : "none";
     $("authoringToggleLanhu").textContent = inlineLanhuOpen ? "收起本页蓝湖工具" : "在本页展开蓝湖工具";
-    positionLanhuMount();
+    positionLanhuMount(); renderLanhuWorkspace();
     if (inlineLanhuOpen && !lanhuHost.status().connected) await connectLanhu();
-    updateLanhuControls(true);
 });
 $("connectLanhu").addEventListener("click", connectLanhu);
 $("authoringUploadLanhu").addEventListener("click", uploadLanhu);
+$("lanhuUploadAction").addEventListener("click", uploadLanhu);
+$("lanhuLoginAction").addEventListener("click", () => lanhuTask(async () => {
+    const credentials = { account: $("lanhuAccount").value, password: $("lanhuPassword").value };
+    $("lanhuPassword").value = "";
+    await lanhuHost.perform("login", credentials);
+}));
+$("lanhuLogout").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("logout")));
+for (const [id, action] of [["lanhuTeam", "team"], ["lanhuProject", "project"], ["lanhuGroup", "group"]]) {
+    $(id).addEventListener("change", () => { const value = $(id).value; return lanhuTask(() => lanhuHost.perform(action, value)); });
+}
+function saveLanhuSettings(scope = boardScope) {
+    const value = { deviceType: $("lanhuDevice").value, deviceScale: $("lanhuScale").value, artboardType: scope };
+    return lanhuTask(() => lanhuHost.perform("settings", value));
+}
+$("lanhuDevice").addEventListener("change", () => {
+    const device = $("lanhuDevice").value, scales = lanhuView().scales;
+    const first = scales && scales[device] && scales[device][0];
+    renderLanhuScales(device, first && first.label, scales);
+    return saveLanhuSettings();
+});
+$("lanhuScale").addEventListener("change", () => saveLanhuSettings());
+$("lanhuBoardsAll").addEventListener("click", () => saveLanhuSettings(1));
+$("lanhuBoardsSelected").addEventListener("click", () => saveLanhuSettings(2));
+for (const [id, action] of [["lanhuSliceLayer", "sliceWithLayer"], ["lanhuSliceGroup", "sliceWithGroup"], ["lanhuUnslice", "unslice"], ["lanhuShowSlices", "showSlice"], ["lanhuHideSlices", "hiddenSlice"], ["lanhuBack", "back"]]) {
+    $(id).addEventListener("click", () => lanhuTask(() => lanhuHost.perform(action)));
+}
+for (const name of ["Upload", "Slice"]) $("lanhu" + name + "Tab").addEventListener("click", () => {
+    for (const item of ["Upload", "Slice"]) {
+        $("lanhu" + item + "View").style.display = item === name ? "block" : "none";
+        $("lanhu" + item + "Tab").setAttribute("aria-selected", item === name ? "true" : "false");
+    }
+});
 $("openLanhuOfficial").addEventListener("click", async () => {
     try {
         if (!uxp.pluginManager) throw new Error("当前宿主未提供插件通信，请从增效工具菜单打开蓝湖。");

@@ -2,7 +2,7 @@
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.1</button>
+<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.2</button>
 <button id="tabLanhu" type="button" role="tab" aria-selected="false" aria-controls="lanhuPane">蓝湖工具</button>
 </div>
 <div id="panelViewport"><div class="panel-content">
@@ -58,14 +58,45 @@
 </div>
 </div>
 <div id="lanhuPane" role="tabpanel" aria-labelledby="tabLanhu" style="display: none;">
-<h2>蓝湖工具</h2>
-<p id="lanhuStatus" role="status">尚未连接蓝湖工具。</p>
-<div id="lanhuSetup">
-<p>加载蓝湖工具后登录账号、选择测试项目，即可在此使用蓝湖界面，也可回资源创作页发起上传。</p>
-<button id="connectLanhu" type="button">加载蓝湖工具</button>
-<button id="openLanhuOfficial" type="button">打开官方蓝湖面板</button>
+<div id="lanhuFullMount"><div id="lanhuWorkspace" class="lanhu-workspace">
+<div class="lanhu-brand"><h2>蓝湖</h2><span id="lanhuAccountSummary">未登录</span></div>
+<p id="lanhuStatus" role="status">登录后选择团队、项目和画板。</p>
+<div id="lanhuLogin" class="lanhu-card">
+<h3>登录蓝湖账号</h3>
+<label>邮箱或手机号<input id="lanhuAccount" type="text" placeholder="输入蓝湖账号"></label>
+<label>密码<input id="lanhuPassword" type="password" placeholder="输入密码"></label>
+<button id="lanhuLoginAction" class="lanhu-primary" type="button">登录</button>
+<p>当前支持账号密码登录；需要 SSO 或浏览器授权时，可使用下方官方面板入口。</p>
 </div>
-<div id="lanhuFullMount"><div id="lanhuMount"></div></div>
+<div class="tool-actions lanhu-toolbar"><button id="connectLanhu" type="button">刷新账号与项目</button><button id="lanhuLogout" type="button" disabled>退出登录</button></div>
+<div class="lanhu-card">
+<label>团队<select id="lanhuTeam"><option value="">登录后选择团队</option></select></label>
+<label>项目<select id="lanhuProject"><option value="">请先选择团队</option></select></label>
+<label>分组<select id="lanhuGroup"><option value="">项目根目录</option></select></label>
+<p class="lanhu-scope">隔离试用：仅测试项目可上传。</p>
+</div>
+<div class="lanhu-subtabs" role="tablist" aria-label="蓝湖功能"><button id="lanhuUploadTab" type="button" role="tab" aria-selected="true">上传设计</button><button id="lanhuSliceTab" type="button" role="tab" aria-selected="false">切图</button></div>
+<div id="lanhuUploadView">
+<div class="lanhu-card">
+<h3>设计倍数</h3>
+<div class="row"><label>平台<select id="lanhuDevice"><option value="">请选择平台</option><option value="iOS">iOS</option><option value="Android">Android</option><option value="Web">Web</option></select></label><label>倍数<select id="lanhuScale"><option value="">请先选择平台</option></select></label></div>
+<h3>上传画板</h3>
+<div class="tool-actions"><button id="lanhuBoardsAll" type="button" aria-pressed="true">该页全部画板</button><button id="lanhuBoardsSelected" type="button" aria-pressed="false">选中画板</button></div>
+<p id="lanhuDocument">当前文档：未打开 PSD</p>
+<div id="lanhuBoardList" class="lanhu-board-list" role="list" aria-label="待上传画板">连接后读取当前文档画板</div>
+</div>
+<button id="lanhuUploadAction" class="lanhu-primary" type="button" disabled>上传到蓝湖</button>
+<div id="lanhuProgress" class="lanhu-card" role="status" style="display: none;"></div>
+<button id="lanhuBack" type="button" style="display: none;">返回继续上传</button>
+</div>
+<div id="lanhuSliceView" class="lanhu-card" style="display: none;">
+<h3>切图设置</h3><p>先在 Photoshop 中选择图层或图层组，再进行切图操作。切图会改变选层设置。</p>
+<button id="lanhuSliceLayer" type="button">标记选层为切图</button><button id="lanhuSliceGroup" type="button">创建切图分组</button><button id="lanhuUnslice" type="button">取消选层切图</button>
+<div class="tool-actions"><button id="lanhuShowSlices" type="button">显示切图</button><button id="lanhuHideSlices" type="button">隐藏切图</button></div>
+</div>
+<button id="openLanhuOfficial" class="lanhu-secondary" type="button">打开官方蓝湖面板</button>
+</div></div>
+<div id="lanhuMount" style="display: none;" aria-hidden="true"></div>
 </div>
 </div></div>
 <script src="panel.js"></script>

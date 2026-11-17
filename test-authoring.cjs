@@ -518,7 +518,8 @@ test("corrupt automatic catalog blocks writes until explicit valid directory imp
 test("invalid PSD identities do not lock a valid local catalog and selected identity can be repaired", async () => {
     const { metadata } = fixture(); metadata.nodes[20] = clone(metadata.nodes[10]);
     const env = await panelHarness(undefined, metadata);
-    assert.match(env.elements.status.textContent, /Duplicate/);
+    assert.match(env.elements.status.textContent, /身份缺失或重复/);
+    assert.match(env.elements.errorDetails.textContent, /Duplicate/);
     await env.click("repairIdentity");
     const repaired = await env.metadata();
     assert.notEqual(repaired.nodes[10].nodeId, repaired.nodes[20].nodeId);
@@ -1051,7 +1052,7 @@ test("inline resource rows cannot change the chosen version while primary action
     assert.equal((await env.metadata()).nodes[10].assetRef, ref, "Choosing another row alone must not write a binding.");
 });
 
-test("tool tabs preserve authoring inputs and share one inline Lanhu mount and actual upload connection", async () => {
+test("tool tabs show native controls immediately, preserve inputs and share one inline workspace and upload connection", async () => {
     const state = { connected: false, uploading: false, loggedIn: false, projectId: null };
     let connections = 0, uploads = 0, destroyed = 0;
     const env = await panelHarness(undefined, undefined, { lanhuHost: ({ onStatus }) => ({
@@ -1063,6 +1064,7 @@ test("tool tabs preserve authoring inputs and share one inline Lanhu mount and a
     assert.equal(env.elements.authoringUploadLanhu.disabled, true, "Generic refresh completion must not enable an unconnected upload action.");
     env.elements.displayName.value = "正在创作的名称"; env.elements.targetWidth.value = "192";
     await env.click("tabLanhu");
+    assert.equal(connections, 1, "Entering the tab initializes the business connection without a load-interface landing page.");
     assert.equal(env.elements.lanhuPane.style.display, "block"); assert.equal(env.elements.authoringPane.style.display, "none");
     assert.equal(env.elements.tabLanhu.getAttribute("aria-selected"), "true");
     await env.click("connectLanhu"); assert.equal(connections, 1);
@@ -1070,14 +1072,14 @@ test("tool tabs preserve authoring inputs and share one inline Lanhu mount and a
     assert.equal(env.elements.displayName.value, "正在创作的名称"); assert.equal(env.elements.targetWidth.value, "192");
     assert.equal(env.elements.authoringUploadLanhu.disabled, false);
     await env.click("authoringToggleLanhu");
-    assert.equal(env.elements.lanhuMount.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
     assert.equal(connections, 1, "Moving the same mount must not create another login/session instance.");
     await env.click("authoringUploadLanhu"); assert.equal(uploads, 1);
-    assert.equal(env.elements.lanhuMount.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
     await env.click("tabLanhu");
-    assert.equal(env.elements.lanhuMount.parentNode, env.elements.lanhuFullMount);
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.lanhuFullMount);
     await env.click("tabAuthoring");
-    assert.equal(env.elements.lanhuMount.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
     assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined); assert.equal(env.state.history.length, 0);
     await env.entrypoints.value.plugin.destroy(); assert.equal(destroyed, 1);
 });
@@ -1105,4 +1107,51 @@ test("panel reports supported-layer failures in Chinese and retains original dia
     assert.match(env.elements.errorDetails.textContent, /Only ordinary pixel layers/);
     assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined);
     assert.equal(env.state.imagingCalls.length, 0);
+});
+
+test("native Lanhu workspace renders real lists and wires account, selection and scope without PSD writes", async () => {
+    const project = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
+    const view = { connected: false, loggedIn: false, uploading: false, projectId: "", teams: [], projects: [], groups: [],
+        allArtboards: [{ id: "board", name: "主界面" }], selectedArtboards: [], artboardType: 1,
+        deviceType: "", deviceScale: "", scales: { Web: [{ label: "@1x", value: "网页" }] } };
+    const calls = [];
+    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({
+        status: () => view, workspace: () => view,
+        async connect() { view.connected = true; },
+        async perform(name, value) {
+            calls.push({ name, value });
+            if (name === "login") { view.loggedIn = true; view.userName = "美术"; view.teams = [{ id: "team", name: "游戏团队" }]; }
+            if (name === "team") { view.teamId = value; view.projects = [{ id: project, name: "隔离项目" }, { id: "other", name: "其他项目" }]; }
+            if (name === "project") view.projectId = value;
+            if (name === "settings") Object.assign(view, value);
+        }, async destroy() {}
+    }) });
+    await env.click("tabLanhu");
+    assert.ok(env.elements.lanhuLoginAction.listeners.click);
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.lanhuFullMount);
+    assert.equal(env.elements.lanhuBoardList.children[0].textContent, "主界面");
+    assert.equal(env.elements.lanhuUploadAction.disabled, true);
+    env.elements.lanhuAccount.value = "account"; env.elements.lanhuPassword.value = "PRIVATE";
+    await env.click("lanhuLoginAction");
+    assert.equal(env.elements.lanhuPassword.value, "");
+    assert.equal(env.elements.lanhuLogin.style.display, "none");
+    assert.equal(env.elements.lanhuAccountSummary.textContent, "美术");
+    env.elements.lanhuTeam.value = "team"; await env.elements.lanhuTeam.listeners.change();
+    assert.equal(env.elements.lanhuProject.children.find(item => item.value === "other").disabled, true);
+    env.elements.lanhuProject.value = project; await env.elements.lanhuProject.listeners.change();
+    env.elements.lanhuDevice.value = "Web"; await env.elements.lanhuDevice.listeners.change();
+    assert.equal(view.deviceScale, "@1x");
+    assert.equal(env.elements.lanhuUploadAction.disabled, false);
+    await env.click("lanhuBoardsSelected");
+    assert.equal(view.artboardType, 2);
+    assert.match(env.elements.lanhuBoardList.textContent, /暂无可上传画板/);
+    await env.click("lanhuSliceTab");
+    assert.equal(env.elements.lanhuSliceView.style.display, "block");
+    assert.equal(env.elements.lanhuUploadView.style.display, "none");
+    await env.click("tabAuthoring"); await env.click("authoringToggleLanhu");
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(env.elements.lanhuAccountSummary.textContent, "美术");
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined);
+    assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
+    assert.equal(calls.some(item => /upload|slice/i.test(item.name)), false);
 });

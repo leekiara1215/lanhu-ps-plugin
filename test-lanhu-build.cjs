@@ -102,3 +102,28 @@ test("generated official crypto fallback resolves inside the isolated window wit
     assert.match(context.module.exports, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.equal(context.crypto, undefined, "The scoped fallback must not assign a real host global.");
 });
+
+test("generated actual bootstrap attaches pinned business adapters to the private VM for native controls", { skip: !official }, () => {
+    const value = prepareRuntime(official);
+    const start = value.runtime.indexOf('window.VM=new k.default(');
+    const end = value.runtime.indexOf('})()})();', start);
+    assert.ok(start > 0 && end > start);
+    const modules = new Map([62824, 62909, 78578, 94878].map(id => [id, { id, DeviceScaleDic: { Web: [] }, SelectScaleConfig: {} }]));
+    const context = { window: {}, k: { default: class { constructor(options) { this.options = options; } $mount(selector) { assert.equal(selector, "#app"); return this; } } }, q: () => "router", MM: () => "store", X: "app", e(id) { assert.ok(modules.has(id)); return modules.get(id); } };
+    vm.runInNewContext(value.runtime.slice(start, end), context);
+    assert.equal(context.window.VM.$gameuiServices.auth, modules.get(62824));
+    assert.equal(context.window.VM.$gameuiServices.project, modules.get(78578));
+    assert.equal(context.window.VM.$gameuiServices.scales, modules.get(94878).DeviceScaleDic);
+});
+
+test("generated official slice visibility adapter retains the API2 completion promise", { skip: !official }, async () => {
+    const value = prepareRuntime(official), start = value.runtime.indexOf("M.prototype.showSlice=function"), end = value.runtime.indexOf(",M.prototype.sliceWithLayer=", start);
+    assert.ok(start > 0 && end > start);
+    let finish;
+    const pending = new Promise(resolve => { finish = resolve; });
+    function Adapter() {}
+    vm.runInNewContext(value.runtime.slice(start, end), { M: Adapter, N: { showSlice: () => pending, hiddenSlice: () => pending } });
+    const adapter = new Adapter();
+    assert.equal(adapter.showSlice(), pending); assert.equal(adapter.hiddenSlice(), pending);
+    finish("native completion"); assert.equal(await adapter.showSlice(), "native completion");
+});
