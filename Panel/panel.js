@@ -59,6 +59,12 @@ function updateLanhuControls(syncStatus = false) {
     $("lanhuUploadAction").disabled = locked || !canUpload || !$("lanhuDevice").value || !$("lanhuScale").value;
     $("connectLanhu").disabled = locked;
     $("lanhuLoginAction").disabled = locked || !!(state && state.loggedIn);
+    const authorizing = !!lanhuView().browserAuthorizing;
+    $("lanhuBrowserAuth").disabled = locked || authorizing || !!(state && state.loggedIn);
+    $("lanhuCancelAuth").disabled = locked || !authorizing;
+    $("lanhuCancelAuth").style.display = authorizing ? "block" : "none";
+    if (authorizing) $("lanhuLoginAction").disabled = true;
+    $("lanhuAuthHint").textContent = authorizing ? "等待浏览器授权…完成后将自动更新账号状态。" : "在浏览器登录蓝湖并授权，完成后将自动返回登录状态。";
     $("lanhuLogout").disabled = locked || !state || !state.loggedIn;
     for (const id of ["lanhuTeam", "lanhuProject", "lanhuGroup"]) $(id).disabled = locked || !state || !state.loggedIn;
     for (const id of ["lanhuDevice", "lanhuScale", "lanhuBoardsAll", "lanhuBoardsSelected", "lanhuSliceLayer", "lanhuSliceGroup", "lanhuUnslice", "lanhuShowSlices", "lanhuHideSlices", "lanhuBack"]) $(id).disabled = locked || !state || !state.connected;
@@ -170,6 +176,8 @@ $("lanhuLoginAction").addEventListener("click", () => lanhuTask(async () => {
     await lanhuHost.perform("login", credentials);
 }));
 $("lanhuLogout").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("logout")));
+$("lanhuBrowserAuth").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("browserAuth")));
+$("lanhuCancelAuth").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("cancelBrowserAuth")));
 for (const [id, action] of [["lanhuTeam", "team"], ["lanhuProject", "project"], ["lanhuGroup", "group"]]) {
     $(id).addEventListener("change", () => { const value = $(id).value; return lanhuTask(() => lanhuHost.perform(action, value)); });
 }

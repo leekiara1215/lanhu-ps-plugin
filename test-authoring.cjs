@@ -1155,3 +1155,23 @@ test("native Lanhu workspace renders real lists and wires account, selection and
     assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
     assert.equal(calls.some(item => /upload|slice/i.test(item.name)), false);
 });
+
+test("native browser authorization button shares pending and cancel state across both tool locations", async () => {
+    const view = { connected: false, loggedIn: false, uploading: false, browserAuthorizing: false, teams: [], projects: [], groups: [], scales: {} };
+    const calls = [];
+    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({
+        status: () => view, workspace: () => view, async connect() { view.connected = true; },
+        async perform(name) { calls.push(name); if (name === "browserAuth") view.browserAuthorizing = true; if (name === "cancelBrowserAuth") view.browserAuthorizing = false; }, async destroy() {}
+    }) });
+    await env.click("tabLanhu"); await env.click("lanhuBrowserAuth");
+    assert.equal(view.browserAuthorizing, true); assert.equal(env.elements.lanhuBrowserAuth.disabled, true);
+    assert.equal(env.elements.lanhuLoginAction.disabled, true); assert.equal(env.elements.lanhuCancelAuth.style.display, "block");
+    assert.match(env.elements.lanhuAuthHint.textContent, /等待浏览器授权/);
+    await env.click("tabAuthoring"); await env.click("authoringToggleLanhu");
+    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
+    await env.click("lanhuCancelAuth");
+    assert.equal(view.browserAuthorizing, false); assert.equal(env.elements.lanhuBrowserAuth.disabled, false);
+    assert.equal(env.elements.lanhuCancelAuth.style.display, "none");
+    assert.ok(calls.includes("browserAuth") && calls.includes("cancelBrowserAuth"));
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
+});

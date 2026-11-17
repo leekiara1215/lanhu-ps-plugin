@@ -377,3 +377,63 @@ test("native controls follow actual upload progress and block settings, slices a
     await env.host.perform("back"); assert.equal(env.vm.$router.currentRoute.name, "home");
     assert.equal(env.state.modalCalls.length, 0);
 });
+
+function browserFixture() {
+    const env = nativeFixture();
+    env.home.browserConnection = () => ({ id: "11111111-1111-4111-8111-111111111111", domain: "https://lanhuapp.com" });
+    env.vm.$lanhuApi.openURI = async url => { env.calls.push({ browserURL: url }); };
+    env.services.auth.authorizedLogin = async id => { env.calls.push({ authId: id }); return { data: { token: "BROWSER_PRIVATE_TOKEN", team_id: "team" } }; };
+    return env;
+}
+function browserTimer(env, delay) {
+    const entry = Array.from(env.state.timers.entries()).find(([, item]) => item.kind === "timeout" && item.delay === delay);
+    assert.ok(entry, "Expected authorization timer " + delay);
+    return { callback() { env.state.timers.delete(entry[0]); return entry[1].callback(); } };
+}
+async function settleBrowser() { for (let index = 0; index < 12; index++) await new Promise(resolve => setImmediate(resolve)); }
+
+test("browser authorization opens the original Lanhu binding URL and retrieves login without exposing the handshake or token", async () => {
+    const env = browserFixture(); await env.host.connect();
+    await env.host.perform("browserAuth");
+    assert.equal(env.host.workspace().browserAuthorizing, true);
+    assert.equal(env.calls.find(item => item.browserURL).browserURL, "https://lanhuapp.com/web/#/user/plug-bind-account?uselocal=true&pluginuuid=11111111-1111-4111-8111-111111111111&pluginType=Ps");
+    assert.doesNotMatch(JSON.stringify(env.host.workspace()), /11111111|BROWSER_PRIVATE/);
+    await assert.rejects(env.host.perform("browserAuth"), { code: "LANHU_BROWSER_AUTH_PENDING" });
+    browserTimer(env, 1000).callback(); await settleBrowser();
+    assert.equal(env.host.workspace().loggedIn, true); assert.equal(env.host.workspace().browserAuthorizing, false);
+    assert.equal(env.data.projectInfo.teamId, "team"); assert.equal(env.host.workspace().projects.length, 2);
+    assert.match(env.messages.at(-1), /已取得浏览器授权/);
+    assert.equal(env.state.uploads, 0); assert.equal(env.state.modalCalls.length, 0);
+    await env.host.destroy(); assert.equal(env.state.timers.size, 0);
+});
+
+test("cancelled or destroyed browser authorization ignores a late network result and clears its timers", async () => {
+    for (const destroy of [false, true]) {
+        const env = browserFixture(); await env.host.connect();
+        let resolve;
+        env.services.auth.authorizedLogin = () => new Promise(done => { resolve = done; });
+        await env.host.perform("browserAuth"); browserTimer(env, 1000).callback(); await settleBrowser();
+        if (destroy) await env.host.destroy(); else await env.host.perform("cancelBrowserAuth");
+        resolve({ data: { token: "LATE_PRIVATE_TOKEN", team_id: "team" } }); await settleBrowser();
+        assert.equal(env.data.userInfo.token, "");
+        assert.equal(env.calls.some(item => item.name === "loginSuccess"), false);
+        assert.equal(env.host.workspace().browserAuthorizing, false);
+        if (!destroy) { await env.host.perform("browserAuth"); assert.equal(env.host.workspace().browserAuthorizing, true); await env.host.destroy(); }
+        assert.equal(env.state.timers.size, 0);
+    }
+});
+
+test("browser authorization has an independent five-minute expiry and refuses an unexpected destination", async () => {
+    const env = browserFixture(); await env.host.connect();
+    env.home.browserConnection = () => ({ id: "11111111-1111-4111-8111-111111111111", domain: "https://unexpected.invalid" });
+    await assert.rejects(env.host.perform("browserAuth"), { code: "LANHU_BROWSER_AUTH_INVALID" });
+    assert.equal(env.calls.length, 0);
+    env.home.browserConnection = () => ({ id: "11111111-1111-4111-8111-111111111111", domain: "https://lanhuapp.com" });
+    env.services.auth.authorizedLogin = async () => ({ data: {} });
+    await env.host.perform("browserAuth"); browserTimer(env, 1000).callback(); await settleBrowser();
+    assert.equal(env.host.workspace().browserAuthorizing, true);
+    browserTimer(env, 300000).callback();
+    assert.equal(env.host.workspace().browserAuthorizing, false); assert.match(env.messages.at(-1), /已超时/);
+    assert.equal(env.data.userInfo.token, ""); assert.equal(env.state.uploads, 0);
+    await env.host.destroy();
+});

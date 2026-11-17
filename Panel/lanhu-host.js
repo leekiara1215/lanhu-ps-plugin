@@ -14,6 +14,76 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     const photoshopListeners = new Set();
     const ownErrors = new WeakSet();
     let teams = [], projects = [], groups = [];
+    let runtimeContext = null, browserAuth = null;
+
+    function cancelBrowserAuth(message) {
+        const ticket = browserAuth;
+        browserAuth = null;
+        if (ticket) {
+            ticket.cancelled = true;
+            if (ticket.timer !== null && runtimeContext) runtimeContext.clearTimeout(ticket.timer);
+            if (ticket.expiryTimer !== null && runtimeContext) runtimeContext.clearTimeout(ticket.expiryTimer);
+        }
+        if (message) notify(message);
+    }
+    function authActive(ticket) { return !destroyed && browserAuth === ticket && !ticket.cancelled && epoch === ticket.epoch; }
+    async function pollBrowserAuth(ticket) {
+        if (!authActive(ticket)) return;
+        if (Date.now() >= ticket.deadline) {
+            cancelBrowserAuth("浏览器授权已超时，请重新获取授权。"); onChange(); return;
+        }
+        try {
+            const response = await services().auth.authorizedLogin(ticket.id);
+            if (!authActive(ticket)) return;
+            // A slow response must not revive a timed-out or cancelled authorization.
+            if (Date.now() >= ticket.deadline) {
+                cancelBrowserAuth("浏览器授权已超时，请重新获取授权。"); onChange(); return;
+            }
+            const data = response && response.data;
+            if (data && typeof data.token === "string" && data.token.trim()) {
+                await vm.$store.dispatch("loginSuccess", { token: data.token });
+                if (!authActive(ticket)) return;
+                if (data.team_id) await vm.$store.dispatch("modifyProjecInfo", { teamId: data.team_id });
+                if (!authActive(ticket)) return;
+                await vm.$router.push({ name: "home" });
+                if (!authActive(ticket)) return;
+                cancelBrowserAuth();
+                notify("已取得浏览器授权，正在刷新团队与项目…"); onChange();
+                try { await refreshWorkspace(); notify("已取得浏览器授权，请选择测试项目。"); }
+                catch (_) { notify("已取得授权；团队与项目读取失败，请点击刷新。"); }
+                if (!destroyed) onChange();
+                return;
+            }
+        } catch (_) { /* A transient network failure is retried within this ticket's deadline. */ }
+        if (!authActive(ticket)) return;
+        ticket.attempts++;
+        ticket.timer = runtimeContext.setTimeout(() => pollBrowserAuth(ticket), ticket.attempts < 60 ? 1000 : 3000);
+    }
+    async function beginBrowserAuth() {
+        const login = components().find(item => typeof item.browserConnection === "function");
+        if (!login || !vm.$lanhuApi || typeof vm.$lanhuApi.openURI !== "function") reject("LANHU_BROWSER_AUTH_UNAVAILABLE", "浏览器授权入口尚未就绪，请刷新连接后重试。");
+        if (browserAuth) reject("LANHU_BROWSER_AUTH_PENDING", "请先在浏览器完成授权，或取消本次等待后重试。");
+        const connection = login.browserConnection();
+        if (!connection || !/^[0-9a-f-]{36}$/i.test(connection.id) || !/^https:\/\/lanhuapp\.com\/?$/.test(connection.domain)) reject("LANHU_BROWSER_AUTH_INVALID", "蓝湖授权地址或会话标识不兼容，请使用官方面板。");
+        const ticket = { id: connection.id, epoch, timer: null, expiryTimer: null, cancelled: false, deadline: Date.now() + 300000, attempts: 0 };
+        browserAuth = ticket;
+        let url = connection.domain.replace(/\/$/, "") + "/web/#/user/plug-bind-account?uselocal=true&pluginuuid=" + encodeURIComponent(ticket.id) + "&pluginType=Ps";
+        const teamId = vm.$store.state.projectInfo && vm.$store.state.projectInfo.teamId;
+        if (teamId) url += "&tid=" + encodeURIComponent(teamId);
+        try {
+            await vm.$lanhuApi.openURI(url);
+            if (!authActive(ticket)) return;
+            notify("已打开蓝湖授权页，请在浏览器完成授权；插件将自动获取登录状态。");
+            ticket.expiryTimer = runtimeContext.setTimeout(() => {
+                if (!authActive(ticket)) return;
+                cancelBrowserAuth("浏览器授权已超时，请重新获取授权。"); onChange();
+            }, 300000);
+            ticket.timer = runtimeContext.setTimeout(() => pollBrowserAuth(ticket), 1000);
+        } catch (cause) {
+            cancelBrowserAuth();
+            reject("LANHU_BROWSER_OPEN_FAILED", "无法打开蓝湖授权页，请检查默认浏览器后重试。", cause);
+        }
+    }
 
     function workspace() {
         const state = vm && vm.$store && vm.$store.state || {};
@@ -28,7 +98,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             upload = { phase, percentage: Number.isFinite(progress.percentage) ? progress.percentage : 0,
                 total: Number(progress.totalCount) || 0, success: Number(progress.successCount) || 0, fail: Number(progress.failCount) || 0 };
         }
-        return { ...status(), userName: String(user.nickname || user.name || user.email || ""),
+        return { ...status(), browserAuthorizing: !!browserAuth, userName: String(user.nickname || user.name || user.email || ""),
             teamId: String(project.teamId || ""), projectName: String(project.projectName || ""), groupId: String(project.groupId || ""),
             teams: list(teams), projects: list(projects), groups: list(groups),
             deviceType: String(setting.deviceType || ""), deviceScale: String(setting.deviceScale || ""),
@@ -65,7 +135,10 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
         try {
             const state = vm.$store.state;
             if (name === "refresh") return await refreshWorkspace();
+            if (name === "browserAuth") { await beginBrowserAuth(); return workspace(); }
+            if (name === "cancelBrowserAuth") { cancelBrowserAuth("已取消等待浏览器授权，可重新获取授权。"); return workspace(); }
             if (name === "login") {
+                cancelBrowserAuth();
                 if (!value || !String(value.account || "").trim() || !value.password) reject("LANHU_LOGIN_REQUIRED", "请填写蓝湖账号和密码。");
                 const response = checkResponse(await api.auth.login({ email: value.account.trim(), password: value.password, password_type: 0 }), "登录失败");
                 if (!response.token) reject("LANHU_LOGIN_FAILED", "登录未返回有效会话，请检查账号和密码。");
@@ -74,6 +147,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
                 await refreshWorkspace();
                 notify("蓝湖已登录，请选择团队与测试项目。");
             } else if (name === "logout") {
+                cancelBrowserAuth();
                 await vm.$store.dispatch("loginOut");
                 await vm.$store.dispatch("projectInfoClear");
                 teams = []; projects = []; groups = [];
@@ -422,6 +496,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             }
             if (!instance || typeof instance !== "object") throw error("LANHU_RUNTIME_INVALID", "蓝湖界面未完成初始化，请重新连接工具。");
             vm = instance;
+            runtimeContext = context;
             if (typeof context.setInterval === "function") context.setInterval(() => onChange(), 750);
             notify("蓝湖工具已加载，请登录并选择测试项目。");
             return status();
@@ -468,6 +543,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     async function destroy() {
         if (destroyed) { await cleanup(); return; }
         destroyed = true;
+        cancelBrowserAuth();
         const instance = vm; vm = null;
         let failure;
         try { if (instance && typeof instance.$destroy === "function") await instance.$destroy(); }

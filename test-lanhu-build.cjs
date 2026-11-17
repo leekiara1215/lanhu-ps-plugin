@@ -127,3 +127,13 @@ test("generated official slice visibility adapter retains the API2 completion pr
     assert.equal(adapter.showSlice(), pending); assert.equal(adapter.hiddenSlice(), pending);
     finish("native completion"); assert.equal(await adapter.showSlice(), "native completion");
 });
+
+test("generated actual login component exposes the original browser handshake helpers without starting authorization", { skip: !official }, () => {
+    const runtime = prepareRuntime(official).runtime, start = runtime.indexOf("browserConnection:function"), end = runtime.indexOf(",toSelect:function", start);
+    assert.ok(start > 0 && end > start);
+    let created = 0;
+    const method = vm.runInNewContext("({" + runtime.slice(start, end) + "})", { p() { created++; return "official-generated-id"; }, Mt: { getDomain: () => "https://lanhuapp.com" } });
+    assert.equal(created, 0);
+    assert.deepEqual(JSON.parse(JSON.stringify(method.browserConnection())), { id: "official-generated-id", domain: "https://lanhuapp.com" });
+    assert.equal(created, 1);
+});

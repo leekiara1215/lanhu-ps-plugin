@@ -2,7 +2,7 @@
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.2</button>
+<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.3</button>
 <button id="tabLanhu" type="button" role="tab" aria-selected="false" aria-controls="lanhuPane">蓝湖工具</button>
 </div>
 <div id="panelViewport"><div class="panel-content">
@@ -63,10 +63,13 @@
 <p id="lanhuStatus" role="status">登录后选择团队、项目和画板。</p>
 <div id="lanhuLogin" class="lanhu-card">
 <h3>登录蓝湖账号</h3>
+<button id="lanhuBrowserAuth" class="lanhu-primary" type="button">从浏览器获取授权</button>
+<button id="lanhuCancelAuth" type="button" style="display: none;">取消等待授权</button>
+<p id="lanhuAuthHint">在浏览器登录蓝湖并授权，完成后将自动返回登录状态。</p>
 <label>邮箱或手机号<input id="lanhuAccount" type="text" placeholder="输入蓝湖账号"></label>
 <label>密码<input id="lanhuPassword" type="password" placeholder="输入密码"></label>
 <button id="lanhuLoginAction" class="lanhu-primary" type="button">登录</button>
-<p>当前支持账号密码登录；需要 SSO 或浏览器授权时，可使用下方官方面板入口。</p>
+<p>也可直接使用账号密码登录；浏览器授权支持沿用网页中的蓝湖登录状态。</p>
 </div>
 <div class="tool-actions lanhu-toolbar"><button id="connectLanhu" type="button">刷新账号与项目</button><button id="lanhuLogout" type="button" disabled>退出登录</button></div>
 <div class="lanhu-card">
