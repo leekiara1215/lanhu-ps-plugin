@@ -1,0 +1,21 @@
+html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+body { height: 100vh; color: #e8e8e8; background: #282828; font-size: 12px; }
+#panelViewport { width: 100%; height: 100%; overflow-x: hidden; overflow-y: scroll; }
+.panel-content { width: 100%; padding: 12px; box-sizing: border-box; }
+h2 { font-size: 18px; margin: 0 0 8px; }
+p { color: #bfbfbf; line-height: 1.5; margin: 6px 0; }
+.scroll-hint, .panel-end { color: #b9d8f0; }
+.scope { background: #4c3c20; padding: 8px; color: #ffdda1; }
+section { display: block; width: 100%; border-top: 1px solid #555; margin-top: 12px; padding-top: 10px; }
+label { display: flex; flex-direction: column; flex-wrap: nowrap; width: 100%; min-width: 0; margin: 6px 0; }
+input, select { width: 100%; min-width: 0; height: 28px; padding: 4px; box-sizing: border-box; border: 1px solid #777; border-radius: 3px; color: #eee; background: #383838; }
+button { display: block; width: 100%; min-width: 0; min-height: 32px; margin: 6px 0; padding: 7px; box-sizing: border-box; color: #eee; background: #454545; border: 1px solid #777; border-radius: 4px; }
+button:disabled { opacity: .45; }
+.row { display: flex; flex-wrap: wrap; width: 100%; min-width: 0; }
+.row label { flex: 1 1 45%; width: 45%; min-width: 0; margin: 6px 6px 6px 0; }
+#selection, #identityInfo, #resourceInfo { width: 100%; min-width: 0; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
+.checker { width: 100%; margin-top: 8px; overflow: hidden; background: #777; }
+#previewImage { max-width: 100%; max-height: 240px; width: auto; height: auto; }
+.issue { width: 100%; padding: 6px; margin-top: 6px; box-sizing: border-box; border: 1px solid #a86b32; white-space: pre-wrap; }
+pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #ffdda1; }
+.panel-end { border-top: 1px solid #555; padding: 10px 0 6px; margin-top: 12px; }

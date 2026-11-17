@@ -1,0 +1,11 @@
+/dist/
+/staging/
+/Fixtures/generated/
+/host-adapter-state/
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.zip
+*.ccx
+*.psd

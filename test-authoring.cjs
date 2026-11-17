@@ -1,0 +1,670 @@
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const zlib = require("node:zlib");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const vm = require("node:vm");
+const cp = require("node:child_process");
+const author = require("./gameui-authoring.js");
+const core = require("./gameui-core.js");
+const clone = value => JSON.parse(JSON.stringify(value));
+const border = { left: 1, top: 1, right: 2, bottom: 1, unit: "sourcePixel", center: "stretch" };
+const options = { assetKey: "ui.button.primary", version: 1, displayName: "蓝色按钮", filterMode: "Point", nineSlice: border };
+function pixels(width = 6, height = 5) {
+    return Uint8Array.from({ length: width * height * 4 }, (_, i) => i % 4 === 3 ? (i * 13) % 256 : (i * 37 + 11) % 256);
+}
+function fixture() {
+    const data = pixels();
+    // Keep nonzero RGB under alpha=0 so JPEG/matting/premultiplication cannot pass.
+    data.set([213, 71, 39, 0], 0);
+    const source = author.snapshot(data, 6, 5);
+    return { data, source, metadata: author.define(author.createMetadata(), 10, options, source), ref: "ui.button.primary@1" };
+}
+function independentDecode(source) {
+    const png = Buffer.from(source.pngBase64, "base64");
+    assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+    assert.equal(png.readUInt32BE(16), source.width); assert.equal(png.readUInt32BE(20), source.height);
+    assert.deepEqual([...png.subarray(24, 29)], [8, 6, 0, 0, 0]);
+    const compressed = [];
+    let p = 8;
+    while (p < png.length) {
+        const n = png.readUInt32BE(p), type = png.toString("ascii", p + 4, p + 8);
+        if (type === "IDAT") compressed.push(png.subarray(p + 8, p + 8 + n));
+        p += n + 12;
+    }
+    const raw = zlib.inflateSync(Buffer.concat(compressed));
+    const out = new Uint8Array(source.width * source.height * 4);
+    for (let y = 0; y < source.height; y++) {
+        const at = y * (source.width * 4 + 1); assert.equal(raw[at], 0);
+        out.set(raw.subarray(at + 1, at + 1 + source.width * 4), y * source.width * 4);
+    }
+    return out;
+}
+
+test("PNG is deterministic, independently inflatable RGBA8 and preserves hidden RGB / soft alpha", () => {
+    for (const [width, height] of [[1, 1], [6, 5], [257, 90]]) {
+        const data = pixels(width, height); data.set([243, 15, 91, 0]);
+        const source = author.snapshot(data, width, height);
+        assert.deepEqual(independentDecode(source), data);
+        assert.deepEqual(author.decodeSnapshot(source), data);
+        assert.equal(source.pngBase64, author.snapshot(data, width, height).pngBase64);
+        assert.deepEqual(Buffer.from(author.unbase64(source.pngBase64)), Buffer.from(source.pngBase64, "base64"));
+    }
+});
+
+test("corrupt, truncated, wrong-size, non-RGBA and excessive PNG snapshots fail", () => {
+    const { source } = fixture();
+    const bytes = Buffer.from(source.pngBase64, "base64");
+    const corrupt = Buffer.from(bytes); corrupt[45] ^= 1;
+    for (const value of [
+        { ...source, pngBase64: corrupt.toString("base64") }, { ...source, width: 7 },
+        { ...source, pngBase64: bytes.subarray(0, 25).toString("base64") },
+        { ...source, pngBase64: "not PNG" }, { ...source, height: 1e9 }
+    ]) assert.throws(() => author.decodeSnapshot(value));
+    assert.throws(() => author.snapshot(new Uint8Array(3), 1, 1), /RGBA/);
+    assert.throws(() => author.snapshot(new Uint8Array(), 0, 5), /positive/);
+    assert.throws(() => author.preview(source, border, 0, 4));
+});
+
+test("same assetRef freezes pixel, dimensions, full border, sampling and unknown resource contract", () => {
+    const { metadata, source, data, ref } = fixture();
+    const before = JSON.stringify(metadata);
+    const same = author.define(metadata, 10, { ...options, displayName: "改显示名字" }, source);
+    assert.equal(same.assets[ref].displayName, "改显示名字");
+    assert.equal(same.nodes[10].nodeId, metadata.nodes[10].nodeId);
+    assert.equal(JSON.stringify(metadata), before);
+    const changedPixels = data.slice(); changedPixels[0] ^= 1;
+    for (const [opts, src] of [
+        [options, author.snapshot(changedPixels, 6, 5)],
+        [{ ...options, filterMode: "Bilinear" }, source],
+        [{ ...options, nineSlice: { ...border, left: 2 } }, source],
+        [options, author.snapshot(pixels(7, 5), 7, 5)]
+    ]) assert.throws(() => author.define(metadata, 10, opts, src), /Immutable assetRef conflict/);
+    const directory = author.directory(metadata); directory.assets[ref].optionalFutureContract = { value: 3 };
+    assert.throws(() => author.importDirectory(metadata, directory), /Immutable assetRef conflict/);
+    const next = author.define(metadata, 10, { ...options, version: 2, filterMode: "Bilinear" }, source);
+    assert.ok(next.assets[ref]); assert.ok(next.assets["ui.button.primary@2"]);
+    assert.equal(next.nodes[10].nodeId, metadata.nodes[10].nodeId);
+});
+
+test("identity survives JSON save/reopen, rename and move; controlled copy gets new nodeId with same assetRef", () => {
+    const { metadata, ref } = fixture();
+    const reopened = JSON.parse(JSON.stringify(metadata));
+    assert.deepEqual(author.inspect(reopened, [{ id: 10, name: "重命名并移动后" }]), []);
+    const copied = author.copyNode(reopened, 10, 20);
+    assert.equal(copied.nodes[20].assetRef, ref);
+    assert.notEqual(copied.nodes[20].nodeId, reopened.nodes[10].nodeId);
+    assert.equal(copied.nodes[20].nativeImageUsage, "validationReference");
+    assert.equal(copied.nodes[20].sampling, undefined);
+    assert.equal(copied.nodes[20].nineSlice, undefined);
+    assert.throws(() => author.copyNode(reopened, 30, 40), /known source/);
+    assert.throws(() => author.copyNode(reopened, 10, 10), /new Photoshop/);
+    const fork = author.forkDocument(copied, [10, 20]);
+    assert.notEqual(fork.documentId, copied.documentId); assert.notEqual(fork.artboardId, copied.artboardId);
+    assert.notEqual(fork.nodes[10].nodeId, copied.nodes[10].nodeId);
+    assert.deepEqual(fork.assets, copied.assets); assert.deepEqual(fork.authoring.sources, copied.authoring.sources);
+    assert.deepEqual(fork.authoring.targets[fork.nodes[10].nodeId], copied.authoring.targets[copied.nodes[10].nodeId]);
+    assert.equal(fork.authoring.targets[copied.nodes[10].nodeId], undefined);
+    assert.throws(() => author.forkDocument(copied, [88]), /changed layer IDs/);
+});
+
+test("arbitrary duplicates remain unbound and require explicit repair; missing layer bindings are reported", () => {
+    const { metadata, ref } = fixture();
+    const issues = author.inspect(metadata, [{ id: 20, name: "原生拷贝" }]);
+    assert.deepEqual(issues.map(value => value.code), ["UNBOUND", "MISSING_LAYER"]);
+    assert.equal(metadata.nodes[20], undefined);
+    const repaired = author.reference(metadata, 20, ref);
+    assert.notEqual(repaired.nodes[20].nodeId, metadata.nodes[10].nodeId);
+    const duplicate = clone(metadata); duplicate.nodes[20] = clone(duplicate.nodes[10]);
+    assert.throws(() => author.validateMetadata(duplicate), /Duplicate/);
+});
+
+test("cross-PSD portable directory carries original snapshots and names, preserving unknown optional fields", () => {
+    const { metadata, ref } = fixture();
+    metadata.futureDocument = { opaque: true }; metadata.assets[ref].optionalFutureContract = { order: [2, 1] };
+    metadata.nodes[10].optionalNode = "keep"; metadata.authoring.optionalAuthoring = { keep: true };
+    const output = author.directory(metadata);
+    assert.deepEqual(output.nodes, {}); assert.deepEqual(output.futureDocument, { opaque: true });
+    assert.deepEqual(output.authoring.optionalAuthoring, { keep: true });
+    const second = author.importDirectory(author.createMetadata(), JSON.parse(JSON.stringify(output)));
+    const referenced = author.reference(second, 99, ref);
+    assert.notEqual(referenced.documentId, metadata.documentId);
+    assert.deepEqual(referenced.assets[ref], metadata.assets[ref]);
+    assert.deepEqual(referenced.authoring.sources[ref], metadata.authoring.sources[ref]);
+    assert.equal(author.reference(metadata, 10, ref).nodes[10].optionalNode, "keep");
+    const reversed = clone(output); reversed.assets[ref].optionalFutureContract = { order: [2, 1] };
+    assert.doesNotThrow(() => author.importDirectory(metadata, reversed));
+});
+
+test("unsupported schema/capability, malformed identities and instance overrides block writes", () => {
+    const { metadata, ref } = fixture();
+    const mutations = [
+        value => value.schemaVersion = 2,
+        value => value.documentId = "",
+        value => value.artboardId = null,
+        value => value.nodes[10].nodeId = 12,
+        value => value.nodes[10].assetRef = {},
+        value => value.nodes[10].nativeImageUsage = "unknown",
+        value => value.requiredCapabilities.push("future.required"),
+        value => value.assets[ref].requiredCapabilities = ["future.asset"],
+        value => value.nodes[10].requiredCapabilities = ["future.node"],
+        value => value.authoring.version = 2,
+        value => value.nodes[10].sampling = { filterMode: "Point" },
+        value => value.assets[ref].version = 3,
+        value => value.assets[ref].nineSlice.left = 0.5,
+        value => value.assets[ref].nineSlice.unit = "targetPixel",
+        value => value.assets[ref].sampling.filterMode = "Trilinear"
+    ];
+    for (const mutate of mutations) { const value = clone(metadata); mutate(value); assert.throws(() => author.validateMetadata(value)); }
+    assert.throws(() => author.define(metadata, 10, { ...options, version: 0 }, metadata.authoring.sources[ref]));
+    const noSnapshot = clone(metadata); delete noSnapshot.authoring;
+    assert.ok(author.inspect(noSnapshot, [{ id: 10, name: "source" }]).some(issue => issue.code === "MISSING_SOURCE"));
+    assert.throws(() => author.directory(noSnapshot), /requires original snapshots/);
+    assert.throws(() => author.reference(noSnapshot, 20, ref), /legacy resource/);
+});
+
+test("Point matches core and Bilinear interpolates across nine-slice seams while retaining fixed corners", () => {
+    const { source, data } = fixture();
+    assert.deepEqual(author.preview(source, border, 18, 15, { filterMode: "Point" }), core.renderNineSlice(data, 6, 5, border, 18, 15));
+    const bilinear = author.preview(source, border, 18, 15, { filterMode: "Bilinear" });
+    const expected = new Uint8Array(18 * 15 * 4);
+    function coordinate(p, n, target, a, b) {
+        return Math.max(0, Math.min(n - 1, p < a ? p : p >= target - b ? n - target + p : a + ((p - a + .5) / (target - a - b)) * (n - a - b) - .5));
+    }
+    for (let y = 0; y < 15; y++) for (let x = 0; x < 18; x++) {
+        const sx = coordinate(x, 6, 18, 1, 2), sy = coordinate(y, 5, 15, 1, 1);
+        const x0 = Math.floor(sx), y0 = Math.floor(sy), dx = sx % 1, dy = sy % 1;
+        for (let c = 0; c < 4; c++) {
+            let total = 0;
+            for (const [ox, wx] of [[0, 1 - dx], [1, dx]]) for (const [oy, wy] of [[0, 1 - dy], [1, dy]]) {
+                total += data[(Math.min(4, y0 + oy) * 6 + Math.min(5, x0 + ox)) * 4 + c] * wx * wy;
+            }
+            expected[(y * 18 + x) * 4 + c] = Math.round(total);
+        }
+    }
+    assert.deepEqual(bilinear, expected);
+    assert.deepEqual(bilinear.subarray(0, 4), data.subarray(0, 4));
+    assert.notDeepEqual(bilinear, author.preview(source, border, 18, 15, { filterMode: "Point" }));
+});
+
+function host(overrides = {}) {
+    const constants = { LayerKind: { NORMAL: "normal" }, DocumentMode: { RGB: "RGB" }, BitsPerChannelType: { EIGHT: 8 }, BlendMode: { NORMAL: "normal", PASSTHROUGH: "passThrough" } };
+    const doc = { id: 1, mode: "RGB", bitsPerChannel: 8, colorProfileName: "sRGB IEC61966-2.1", typename: "Document" };
+    const layer = { id: 10, name: "plain", kind: "normal", isBackgroundLayer: false, opacity: 100, fillOpacity: 100,
+        visible: true, isClippingMask: false, blendMode: "normal", parent: doc,
+        boundsNoEffects: { left: 5, top: 7, right: 11, bottom: 12 } };
+    doc.layers = [layer]; doc.activeLayers = [layer];
+    const data = fixture().data;
+    const imageData = { width: 6, height: 5, components: 4, componentSize: 8, colorSpace: "RGB",
+        async getData(options) { assert.equal(options.chunky, true); return data; }, dispose() { state.disposed++; } };
+    const state = { disposed: 0, imagingCalls: [], writes: [], stored: null, descriptor: { _obj: "layer" }, xmp: {}, ...overrides };
+    class XMPMeta {
+        static registerNamespace() {}
+        constructor(text) { this.values = text ? JSON.parse(text) : {}; }
+        getProperty(_ns, key) { return this.values[key]; }
+        setProperty(_ns, key, value) { this.values[key] = value; }
+        serialize() { return JSON.stringify(this.values); }
+    }
+    const photoshop = { constants, app: { activeDocument: doc },
+        action: { async batchPlay(commands) {
+            const command = commands[0];
+            if (command._target[0]._ref === "layer") return [state.descriptor];
+            if (command._obj === "set") { state.stored = command.to.XMPMetadataAsUTF8; return [{}]; }
+            return [{ XMPMetadataAsUTF8: state.stored || "" }];
+        } },
+        imaging: { async getPixels(options) {
+            state.imagingCalls.push(options);
+            return { imageData, level: 0, sourceBounds: { ...layer.boundsNoEffects }, ...(state.pixelResult || {}) };
+        }, async createImageDataFromBuffer(raw, options) {
+            return { raw, options, dispose() { state.disposed++; } };
+        }, async putPixels(options) {
+            state.writes.push(options);
+            const { width, height } = options.imageData.options;
+            const target = author.targetFromPixels(options.imageData.raw, width, height);
+            const active = doc.layers.find(value => value.id === options.layerID);
+            active.boundsNoEffects = { left: options.targetBounds.left + target.insetLeft,
+                top: options.targetBounds.top + target.insetTop,
+                right: options.targetBounds.left + target.insetLeft + target.contentWidth,
+                bottom: options.targetBounds.top + target.insetTop + target.contentHeight };
+        } }
+    };
+    const module = { exports: {} };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, "gameui-ps.js"), "utf8"), {
+        module, Uint8Array, DataView, console, require(name) {
+            if (name === "photoshop") return photoshop;
+            if (name === "uxp") return { xmp: { XMPMeta } };
+            if (name === "./gameui-authoring.js") return author;
+            throw new Error("Unexpected dependency " + name);
+        }
+    });
+    return { store: module.exports, photoshop, state, doc, layer, data, imageData };
+}
+
+test("PS capture stops parent traversal at Document and preserves RGBA with alpha disabled and no scaling", async () => {
+    const { store, doc, layer, state, data } = host();
+    const source = await store.captureLayerSource(doc, layer);
+    assert.deepEqual(author.decodeSnapshot(source), data);
+    assert.equal(state.disposed, 1); assert.equal(state.imagingCalls.length, 1);
+    const args = state.imagingCalls[0];
+    assert.equal(args.applyAlpha, false); assert.equal(args.targetSize, undefined);
+    assert.equal(args.componentSize, 8); assert.equal(args.colorProfile, doc.colorProfileName);
+    assert.equal(args.layerID, 10); assert.equal(args.documentID, 1);
+});
+
+test("PS opaque RGB capture adds alpha=255; trimmed empty bounds are padded transparently", async () => {
+    const { store, doc, layer, imageData, state } = host();
+    imageData.components = 3; imageData.width = 2; imageData.height = 1;
+    imageData.getData = async () => new Uint8Array([13, 45, 87, 210, 33, 9]);
+    state.pixelResult = { sourceBounds: { left: 6, top: 8, right: 8, bottom: 9 } };
+    const source = await store.captureLayerSource(doc, layer);
+    const out = author.decodeSnapshot(source);
+    assert.deepEqual(out.subarray(28, 36), new Uint8Array([13, 45, 87, 255, 210, 33, 9, 255]));
+    assert.deepEqual(out.subarray(0, 24), new Uint8Array(24));
+    assert.equal(state.disposed, 1);
+});
+
+test("PS rejects non-sRGB, nonpixel, masked/styled/clipped/translucent and fractional sources before reading pixels", async () => {
+    for (const change of [
+        env => env.doc.colorProfileName = "Adobe RGB (1998)", env => env.doc.bitsPerChannel = 16,
+        env => env.layer.kind = "smartObject", env => env.layer.isBackgroundLayer = true,
+        env => env.layer.opacity = 99, env => env.layer.isClippingMask = true,
+        env => env.layer.boundsNoEffects.left = .5, env => env.state.descriptor.hasUserMask = true,
+        env => env.state.descriptor.layerEffects = {}, env => env.state.descriptor.hasVectorMask = true,
+        env => env.layer.parent = { ...env.layer, id: 11, opacity: 50, parent: env.doc }
+    ]) {
+        const env = host(); change(env);
+        await assert.rejects(env.store.captureLayerSource(env.doc, env.layer));
+        assert.equal(env.state.imagingCalls.length, 0);
+    }
+});
+
+test("PS rejects pyramid/non-RGBA invalid imaging results and disposes host image on failure", async () => {
+    for (const change of [env => env.state.pixelResult = { level: 1 }, env => env.imageData.components = 2,
+        env => env.imageData.getData = async () => { throw new Error("host buffer failed"); }]) {
+        const env = host(); change(env);
+        await assert.rejects(env.store.captureLayerSource(env.doc, env.layer)); assert.equal(env.state.disposed, 1);
+    }
+});
+
+test("applying preview replaces same layer from immutable source without recapturing its stretched pixels", async () => {
+    const { metadata, source, ref } = fixture();
+    const before = JSON.stringify(metadata), env = host();
+    await env.store.applyLayerPreview(env.doc, env.layer, source, metadata.assets[ref], 18, 15);
+    assert.equal(JSON.stringify(metadata), before); assert.equal(env.state.imagingCalls.length, 0);
+    const write = env.state.writes[0];
+    assert.equal(write.layerID, 10); assert.equal(write.replace, true);
+    assert.equal(write.targetBounds.left, 5); assert.equal(write.targetBounds.top, 7);
+    assert.equal(write.imageData.options.width, 18); assert.equal(write.imageData.options.height, 15);
+    assert.deepEqual(write.imageData.raw, author.preview(source, border, 18, 15, { filterMode: "Point" }));
+    assert.equal(env.state.disposed, 1);
+});
+
+test("XMP write immediately reads back exact authoring sources and stable identities", async () => {
+    const { metadata } = fixture(); const env = host();
+    await env.store.writeMetadata(1, metadata);
+    assert.equal(JSON.stringify((await env.store.readMetadata(1)).metadata), JSON.stringify(metadata));
+    const original = env.photoshop.action.batchPlay;
+    env.photoshop.action.batchPlay = async commands => {
+        const result = await original(commands);
+        if (commands[0]._obj === "set") env.state.stored = "{}";
+        return result;
+    };
+    await assert.rejects(env.store.writeMetadata(1, metadata), /readback differs/);
+});
+
+test("panel staging contains standalone runtime and refuses destructive overwrite", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "gameui-panel-test-"));
+    try {
+        const target = path.join(temporary, "plugin");
+        const script = path.join(__dirname, "Panel/build-panel.cjs");
+        const result = cp.spawnSync(process.execPath, [script, target], { encoding: "utf8" });
+        assert.equal(result.status, 0, result.stderr);
+        const manifest = JSON.parse(fs.readFileSync(path.join(target, "manifest.json")));
+        assert.equal(manifest.host.data.apiVersion, 2);
+        assert.equal(manifest.id, "com.bettagames.gameui.authoring.test");
+        for (const file of ["gameui-core.js", "gameui-ps.js", "gameui-authoring.js"]) assert.equal(fs.readFileSync(path.join(target, file), "utf8"), fs.readFileSync(path.join(__dirname, file), "utf8"));
+        assert.equal(cp.spawnSync(process.execPath, [script, target]).status, 1);
+        assert.equal(cp.spawnSync(process.execPath, [script, path.join(__dirname, "Panel")]).status, 1);
+    } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("explicit transparent source canvas keeps 64x48 dimensions around 60x44 content without guessing", async () => {
+    const env = host();
+    env.layer.boundsNoEffects = { left: 20, top: 30, right: 80, bottom: 74 };
+    env.imageData.width = 60; env.imageData.height = 44;
+    const content = pixels(60, 44);
+    env.imageData.getData = async () => content;
+    const source = await env.store.captureLayerSource(env.doc, env.layer, { left: 2, top: 2, right: 2, bottom: 2 });
+    assert.equal(source.width, 64); assert.equal(source.height, 48);
+    const data = independentDecode(source);
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 64; x++) {
+        const actual = data.subarray((y * 64 + x) * 4, (y * 64 + x + 1) * 4);
+        assert.deepEqual(actual, x < 2 || x >= 62 || y < 2 || y >= 46 ? new Uint8Array(4) : content.subarray(((y - 2) * 60 + x - 2) * 4, ((y - 2) * 60 + x - 1) * 4));
+    }
+    const args = env.state.imagingCalls[0].sourceBounds;
+    assert.equal(args.left, 18); assert.equal(args.right, 82); assert.equal(args.top, 28); assert.equal(args.bottom, 76);
+    await assert.rejects(env.store.captureLayerSource(env.doc, env.layer, { left: -1, top: 0, right: 0, bottom: 0 }), /padding/);
+    const noPadding = await env.store.captureLayerSource(env.doc, env.layer);
+    assert.equal(noPadding.width, 60); assert.equal(noPadding.height, 44);
+});
+
+async function panelHarness(catalogText, initialMetadata, startup = {}) {
+    class Element {
+        constructor(tag) { this.tag = tag; this.children = []; this.value = ""; this.listeners = {}; this.style = {}; this._text = ""; }
+        set textContent(value) { this._text = value; this.children = []; if (this.tag === "select") this.value = ""; }
+        get textContent() { return this._text; }
+        appendChild(child) { this.children.push(child); if (this.tag === "select" && !this.value) this.value = child.value; }
+        setAttribute(name, value) { this[name] = value; }
+        addEventListener(name, callback) { this.listeners[name] = callback; }
+    }
+    const html = fs.readFileSync(path.join(__dirname, "Panel/index.html"), "utf8");
+    const elements = {};
+    for (const match of html.matchAll(/<(\w+)[^>]*id="([^"]+)"[^>]*>/g)) {
+        const element = elements[match[2]] = new Element(match[1]);
+        const value = match[0].match(/value="([^"]*)"/); if (value) element.value = value[1];
+    }
+    elements.sampling.value = "Bilinear";
+    assert.match(html, /option value="Point"/); assert.match(html, /option value="Bilinear"/);
+    const env = host(); env.doc.name = "IsolatedPanelTest.psd"; env.photoshop.app.documents = [env.doc];
+    env.photoshop.core = { async executeAsModal(action) {
+        return action({ hostControl: { async suspendHistory() { return 1; }, async resumeHistory() {} } });
+    } };
+    if (initialMetadata) await env.store.writeMetadata(1, initialMetadata);
+    env.layer.duplicate = async () => {
+        const layer = { ...env.layer, id: 20, name: "controlled-copy" }; env.doc.layers.push(layer); return layer;
+    };
+    const originalBatch = env.photoshop.action.batchPlay;
+    env.photoshop.action.batchPlay = async commands => {
+        const command = commands[0];
+        if (command._obj === "select") {
+            env.doc.activeLayers = [env.doc.layers.find(layer => layer.id === command._target[0]._id)]; return [{}];
+        }
+        return originalBatch(commands);
+    };
+    const file = { name: "gameui-resource-catalog.json", text: catalogText,
+        async write(value) { this.text = value; }, async read() { return this.text; } };
+    const folder = { async getEntries() { return file.text === undefined ? [] : [file]; }, async createFile() { return file; } };
+    let releaseCatalog;
+    const catalogReady = startup.deferCatalog ? new Promise(resolve => { releaseCatalog = resolve; }) : Promise.resolve();
+    const entrypoints = {};
+    if (startup.noDocument) { env.photoshop.app.activeDocument = null; env.photoshop.app.documents = []; }
+    const uxp = { entrypoints: { setup(value) {
+        entrypoints.value = value;
+        if (startup.showDuringSetup) value.panels.gameuiAuthoring.show();
+    } }, storage: { localFileSystem: { async getDataFolder() { await catalogReady; return folder; },
+        async getFileForOpening() { return { async read() { return JSON.stringify(startup.importDirectory || author.directory(fixture().metadata)); } }; } } } };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, "Panel/panel.js"), "utf8"), {
+        document: { getElementById(id) { assert.ok(elements[id], id); return elements[id]; }, createElement(tag) { return new Element(tag); },
+            querySelectorAll(tag) { return Object.values(elements).filter(element => element.tag === tag); } },
+        console, require(name) {
+            if (name === "photoshop") return env.photoshop; if (name === "uxp") return uxp;
+            if (name === "./gameui-ps.js") return env.store; if (name === "./gameui-authoring.js") return author;
+            if (name === "./gameui-core.js") return core; throw new Error(name);
+        }
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    return { ...env, elements, file, releaseCatalog, entrypoints, async click(id) { await elements[id].listeners.click(); },
+        async metadata() { return clone((await env.store.readMetadata(env.doc.id)).metadata); } };
+}
+
+test("panel actions initialize, define, apply and controlled copy without requiring a source sample layer", async () => {
+    const env = await panelHarness();
+    await env.click("initialize");
+    assert.match(env.elements.status.textContent, /待处理/);
+    const initialized = await env.metadata();
+    assert.equal(initialized.uploadScope.projectId, "cfea1199-7c07-48d9-86ef-cdbd3385c237");
+    env.elements.displayName.value = options.displayName; env.elements.sampling.value = "Point";
+    for (const side of ["left", "top", "right", "bottom"]) env.elements[side].value = String(border[side]);
+    await env.click("createResource");
+    const value = await env.metadata();
+    assert.ok(value.nodes[10], env.elements.status.textContent);
+    const ref = value.nodes[10].assetRef;
+    const source = clone(value.authoring.sources[ref]);
+    assert.equal(value.assets[ref].version, 1);
+    assert.notEqual(value.assets[ref].assetKey, options.assetKey);
+    assert.equal(env.doc.layers.length, 1);
+    assert.equal(value.nodes[10].kind, "image");
+    env.elements.targetWidth.value = "18"; env.elements.targetHeight.value = "15";
+    await env.click("apply");
+    const stretched = await env.metadata();
+    assert.equal(stretched.nodes[10].nodeId, value.nodes[10].nodeId);
+    assert.deepEqual(stretched.authoring.sources[ref], source);
+    assert.equal(env.state.writes[0].layerID, 10);
+    await env.click("copy");
+    const copied = await env.metadata();
+    assert.ok(copied.nodes[20], env.elements.status.textContent);
+    assert.notEqual(copied.nodes[20].nodeId, value.nodes[10].nodeId);
+    assert.equal(copied.nodes[20].assetRef, ref);
+    assert.deepEqual(copied.authoring.sources[ref], source);
+    assert.equal(env.doc.layers.length, 2);
+    assert.equal(Object.values(copied.nodes).some(marker => marker.kind === "resourceSource"), false);
+    assert.deepEqual(JSON.parse(env.file.text).authoring.sources[ref], source);
+});
+
+test("corrupt automatic catalog blocks writes until explicit valid directory import", async () => {
+    const env = await panelHarness("{broken");
+    await env.click("initialize");
+    assert.match(env.elements.status.textContent, /阻止覆盖/);
+    assert.equal(env.file.text, "{broken"); assert.equal(await env.metadata(), null);
+    await env.click("import");
+    assert.ok(JSON.parse(env.file.text).assets["ui.button.primary@1"]);
+    // Import recovers the catalog, while the unopened/uninitialized PSD still requires explicit init.
+    await env.click("initialize");
+    assert.equal((await env.metadata()).schemaVersion, 1);
+});
+
+test("invalid PSD identities do not lock a valid local catalog and selected identity can be repaired", async () => {
+    const { metadata } = fixture(); metadata.nodes[20] = clone(metadata.nodes[10]);
+    const env = await panelHarness(undefined, metadata);
+    assert.match(env.elements.status.textContent, /Duplicate/);
+    await env.click("repairIdentity");
+    const repaired = await env.metadata();
+    assert.notEqual(repaired.nodes[10].nodeId, repaired.nodes[20].nodeId);
+    assert.equal(repaired.nodes[10].assetRef, repaired.nodes[20].assetRef);
+    assert.equal(repaired.nodes[10].nativeImageUsage, "validationReference");
+});
+
+function transparentSource() {
+    const data = new Uint8Array(64 * 48 * 4);
+    for (let y = 2; y < 46; y++) for (let x = 2; x < 62; x++) data.set([23, 121, 231, 255], (y * 64 + x) * 4);
+    const source = author.snapshot(data, 64, 48);
+    const opts = { ...options, nineSlice: { left: 8, top: 8, right: 8, bottom: 8, unit: "sourcePixel", center: "stretch" } };
+    return { source, metadata: author.define(author.createMetadata(), 10, opts, source) };
+}
+
+test("target canvas is derived from nonzero alpha and copied/rekeyed with instance identity", () => {
+    const { metadata } = transparentSource(), id = metadata.nodes[10].nodeId;
+    assert.deepEqual(metadata.authoring.targets[id], { width: 64, height: 48, insetLeft: 2, insetTop: 2, contentWidth: 60, contentHeight: 44 });
+    const copied = author.copyNode(metadata, 10, 20);
+    assert.deepEqual(copied.authoring.targets[copied.nodes[20].nodeId], metadata.authoring.targets[id]);
+    const fork = author.forkDocument(copied, [10, 20]);
+    for (const marker of Object.values(fork.nodes)) assert.ok(fork.authoring.targets[marker.nodeId]);
+    assert.equal(fork.authoring.targets[id], undefined);
+    assert.equal(author.directory(metadata).authoring.targets, undefined);
+    const referenced = author.reference(metadata, 20, options.assetKey + "@1", false,
+        { width: 92, height: 124, insetLeft: 0, insetTop: 0, contentWidth: 92, contentHeight: 124 });
+    assert.equal(referenced.authoring.targets[referenced.nodes[20].nodeId].width, 92);
+});
+
+test("invalid, fractional, empty and orphan target canvas records fail while legacy metadata remains valid", () => {
+    const { metadata } = transparentSource(), id = metadata.nodes[10].nodeId;
+    for (const change of [target => target.width = 0, target => target.insetLeft = .5, target => target.insetTop = -1,
+        target => target.contentHeight = 0, target => target.contentWidth = 64]) {
+        const value = clone(metadata); change(value.authoring.targets[id]); assert.throws(() => author.validateMetadata(value));
+    }
+    const orphan = clone(metadata); orphan.authoring.targets.orphan = clone(orphan.authoring.targets[id]);
+    assert.throws(() => author.validateMetadata(orphan), /matching nodeId/);
+    const resourceSource = clone(metadata); resourceSource.nodes[10].kind = "resourceSource";
+    assert.throws(() => author.validateMetadata(resourceSource), /requires an image node/);
+    const legacy = clone(metadata); delete legacy.authoring.targets; assert.doesNotThrow(() => author.validateMetadata(legacy));
+    assert.throws(() => author.targetFromPixels(new Uint8Array(4 * 3 * 4), 4, 3), /integer|empty/);
+});
+
+test("128x80 target preserves full canvas around native124x76 content and stable origin after moves/reapply", async () => {
+    const { source, metadata } = transparentSource();
+    const env = host();
+    env.layer.boundsNoEffects = { left: 314, top: 34, right: 374, bottom: 78 };
+    const id = metadata.nodes[10].nodeId, asset = metadata.assets[options.assetKey + "@1"];
+    const first = await env.store.applyLayerPreview(env.doc, env.layer, source, asset, 128, 80, metadata.authoring.targets[id]);
+    assert.deepEqual(first, { width: 128, height: 80, insetLeft: 2, insetTop: 2, contentWidth: 124, contentHeight: 76 });
+    assert.equal(env.state.writes[0].targetBounds.left, 312); assert.equal(env.state.writes[0].targetBounds.top, 32);
+    const updated = author.withTarget(metadata, 10, first);
+    assert.equal(updated.authoring.targets[id].width, 128);
+    assert.equal(env.layer.boundsNoEffects.right - env.layer.boundsNoEffects.left, 124);
+    assert.equal(env.layer.boundsNoEffects.bottom - env.layer.boundsNoEffects.top, 76);
+    env.layer.boundsNoEffects.left += 17; env.layer.boundsNoEffects.right += 17;
+    env.layer.boundsNoEffects.top += 21; env.layer.boundsNoEffects.bottom += 21;
+    await env.store.applyLayerPreview(env.doc, env.layer, source, asset, 128, 80, first);
+    assert.equal(env.state.writes[1].targetBounds.left, 329); assert.equal(env.state.writes[1].targetBounds.top, 53);
+    env.layer.boundsNoEffects.right++;
+    assert.throws(() => env.store.assertTargetLayer(env.layer, first), /Reapply/);
+    const repaired = await env.store.applyLayerPreview(env.doc, env.layer, source, asset, 128, 80, first);
+    assert.equal(repaired.contentWidth, 124); assert.equal(env.state.writes.length, 3);
+});
+
+test("unexpected host content bounds after applying pixels are rejected", async () => {
+    const { source, metadata } = transparentSource(), env = host();
+    const original = env.photoshop.imaging.putPixels;
+    env.photoshop.imaging.putPixels = async args => { await original(args); env.layer.boundsNoEffects.right++; };
+    await assert.rejects(env.store.applyLayerPreview(env.doc, env.layer, source, metadata.assets[options.assetKey + "@1"], 128, 80), /Reapply/);
+    assert.equal(env.state.disposed, 1);
+});
+
+test("malformed GameUI XMP JSON has a typed error without exposing property contents; unmarked PSD stays null", async () => {
+    const env = host();
+    assert.equal((await env.store.readMetadata(1)).metadata, null);
+    for (const broken of ["", "private-garbage-marker"]) {
+        env.state.stored = JSON.stringify({ metadata: broken });
+        await assert.rejects(env.store.readMetadata(1), error => {
+            assert.equal(error.code, "GAMEUI_METADATA_INVALID"); assert.ok(error.cause);
+            assert.equal(error.message.includes("private-garbage-marker"), false);
+            assert.equal(JSON.stringify(error).includes("private-garbage-marker"), false);
+            return true;
+        });
+    }
+});
+
+test("resource creation assigns internal identity and publishing chooses the catalog maximum version plus one", () => {
+    const { source } = fixture();
+    const settings = { displayName: "美术只需填写名称", nineSlice: border, filterMode: "Point" };
+    const empty = author.createMetadata();
+    const firstOptions = author.resourceOptions(empty, null, "create", settings);
+    assert.equal(firstOptions.version, 1); assert.match(firstOptions.assetKey, /^g-/);
+    let catalog = author.define(empty, 10, firstOptions, source);
+    const ref = catalog.nodes[10].assetRef;
+    catalog = author.define(catalog, 20, { ...firstOptions, version: 3 }, source);
+    const publishOptions = author.resourceOptions(catalog, ref, "publish", { ...settings, filterMode: "Bilinear" });
+    assert.equal(publishOptions.assetKey, firstOptions.assetKey); assert.equal(publishOptions.version, 4);
+    const updated = author.define(catalog, 10, publishOptions, source);
+    assert.equal(updated.nodes[10].assetRef, firstOptions.assetKey + "@4");
+    assert.equal(updated.assets[ref].sampling.filterMode, "Point");
+});
+
+test("panel directory import stays private and referencing adds only the selected version to PSD", async () => {
+    const { metadata, source, ref } = fixture();
+    const library = author.directory(author.define(metadata, 20, { ...options, version: 2 }, source));
+    const env = await panelHarness(JSON.stringify(library));
+    await env.click("initialize");
+    assert.deepEqual((await env.metadata()).assets, {});
+    env.elements.resources.value = ref;
+    await env.click("reference");
+    const value = await env.metadata();
+    assert.deepEqual(Object.keys(value.assets), [ref]);
+    assert.deepEqual(Object.keys(value.authoring.sources), [ref]);
+    assert.deepEqual(value.authoring.targets[value.nodes[10].nodeId], { width: 6, height: 5, insetLeft: 0, insetTop: 0, contentWidth: 6, contentHeight: 5 });
+    const imported = await panelHarness();
+    await imported.click("initialize"); await imported.click("import");
+    assert.deepEqual((await imported.metadata()).assets, {});
+    assert.ok(JSON.parse(imported.file.text).assets[ref]);
+});
+
+test("panel name update keeps identity/source and publishing assigns the next version without artist ID input", async () => {
+    const env = await panelHarness();
+    assert.equal(env.elements.assetKey, undefined); assert.equal(env.elements.version, undefined);
+    await env.click("initialize"); env.elements.displayName.value = "按钮";
+    await env.click("createResource");
+    const initial = await env.metadata(), ref = initial.nodes[10].assetRef;
+    const calls = env.state.imagingCalls.length;
+    env.elements.displayName.value = "更新名称"; await env.click("define");
+    const renamed = await env.metadata();
+    assert.equal(renamed.assets[ref].displayName, "更新名称");
+    assert.equal(renamed.nodes[10].nodeId, initial.nodes[10].nodeId);
+    assert.deepEqual(renamed.authoring.sources[ref], initial.authoring.sources[ref]);
+    assert.equal(env.state.imagingCalls.length, calls);
+    env.elements.left.value = "1";
+    await env.click("publishVersion");
+    const published = await env.metadata();
+    assert.equal(published.nodes[10].nodeId, initial.nodes[10].nodeId);
+    assert.equal(published.nodes[10].assetRef, initial.assets[ref].assetKey + "@2");
+    assert.equal(published.assets[ref].version, 1); assert.equal(published.assets[published.nodes[10].assetRef].version, 2);
+});
+
+test("panel startup show before delayed catalog load clears loading status and refreshes a subsequently opened PSD", async () => {
+    const env = await panelHarness(undefined, undefined, { deferCatalog: true, showDuringSetup: true, noDocument: true });
+    assert.match(env.elements.status.textContent, /正在加载/);
+    assert.doesNotMatch(env.elements.status.textContent, /不可读|备份目录/);
+    await env.click("initialize");
+    assert.match(env.elements.status.textContent, /正在加载/);
+    env.releaseCatalog();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(env.elements.selection.textContent, "请打开 PSD");
+    assert.match(env.elements.status.textContent, /请先打开 PSD/);
+    assert.doesNotMatch(env.elements.status.textContent, /不可读|加载/);
+    env.photoshop.app.activeDocument = env.doc; env.photoshop.app.documents = [env.doc];
+    await env.click("refresh");
+    assert.match(env.elements.selection.textContent, /IsolatedPanelTest/);
+    assert.match(env.elements.status.textContent, /未初始化/);
+    await env.click("initialize");
+    assert.equal((await env.metadata()).schemaVersion, 1);
+});
+
+test("panel rejects a trimmed duplicate display name before new resource creation without writing PSD or catalog", async () => {
+    const { metadata, ref } = fixture();
+    const env = await panelHarness(JSON.stringify(author.directory(metadata)));
+    await env.click("initialize");
+    const beforeMetadata = await env.metadata(), beforeFile = env.file.text, beforeStored = env.state.stored;
+    const beforeCapture = env.state.imagingCalls.length;
+    env.elements.displayName.value = "  " + options.displayName + "  ";
+    await env.click("createResource");
+    assert.equal(env.elements.status.textContent, "已有同名公共资源，请从选择器引用；独立资源请用不同名称");
+    assert.deepEqual(await env.metadata(), beforeMetadata);
+    assert.equal(env.state.stored, beforeStored); assert.equal(env.file.text, beforeFile);
+    assert.equal(env.state.imagingCalls.length, beforeCapture);
+    assert.deepEqual(Object.keys(JSON.parse(env.file.text).assets), [ref]);
+    env.elements.displayName.value = "独立资源使用不同名称";
+    await env.click("createResource");
+    const created = await env.metadata();
+    assert.notEqual(created.nodes[10].assetRef, ref);
+    assert.equal(Object.keys(JSON.parse(env.file.text).assets).length, 2);
+    assert.ok(JSON.parse(env.file.text).assets[ref]);
+});
+
+test("panel distinguishes existing and imported same-name same-version options while preserving exact reference values", async () => {
+    const { metadata, source, ref } = fixture();
+    const secondRef = "ui.independent@1", uniqueRef = "ui.unique@1";
+    let library = author.define(metadata, 20, { ...options, assetKey: "ui.independent" }, source);
+    library = author.directory(author.define(library, 30, { ...options, assetKey: "ui.unique", displayName: "唯一名称" }, source));
+    library.assets[secondRef].displayName = "  " + options.displayName + "  ";
+    for (const imported of [false, true]) {
+        const env = imported ? await panelHarness(undefined, undefined, { importDirectory: library }) : await panelHarness(JSON.stringify(library));
+        if (imported) await env.click("import");
+        const items = env.elements.resources.children;
+        assert.equal(items.length, 3);
+        const first = items.find(item => item.value === ref), second = items.find(item => item.value === secondRef);
+        assert.notEqual(first.textContent, second.textContent);
+        assert.match(first.textContent, /条目 [1-3]$/); assert.match(second.textContent, /条目 [1-3]$/);
+        assert.equal(items.find(item => item.value === uniqueRef).textContent, "唯一名称 · v1");
+        assert.deepEqual(items.map(item => item.value).sort(), [ref, secondRef, uniqueRef].sort());
+        await env.click("initialize");
+        env.elements.resources.value = secondRef;
+        env.elements.resources.listeners.change();
+        assert.ok(env.elements.resourceInfo.textContent.replace(/\n/g, "").includes(secondRef));
+        await env.click("reference");
+        const value = await env.metadata();
+        assert.equal(value.nodes[10].assetRef, secondRef);
+        assert.deepEqual(Object.keys(value.assets), [secondRef]);
+        assert.equal(Object.keys(JSON.parse(env.file.text).assets).length, 3);
+    }
+});

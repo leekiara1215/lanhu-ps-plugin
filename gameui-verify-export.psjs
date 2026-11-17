@@ -1,0 +1,23 @@
+const ps = require("photoshop");
+const fs = require("uxp").storage.localFileSystem;
+const exporter = require("./gameui-export.js");
+const folder = await fs.getEntryWithUrl("file:/Users/betta/.codex/visualizations/2026/11/12/01a1cd79-c50b-7c33-8865-38c38d4029ff/lanhu-gameui-mvp-20261116");
+const result = { scope: "Local capture against actual PS XMP and the first real native upload; not a cloud readback." };
+try {
+    const doc = ps.app.activeDocument;
+    if (doc.name !== "LanhuGameUIFoundation20261116.psd") throw new Error("Only the first audit PSD may be checked.");
+    const file = await folder.getEntry("first-upload-without-gameui.json");
+    const payload = JSON.parse((await file.read()).replace(/^\uFEFF/, ""));
+    const config = { projectId: "cfea1199-7c07-48d9-86ef-cdbd3385c237" };
+    await exporter.capture(payload, config, doc.id);
+    exporter.finalize(payload, config);
+    result.documentId = payload.gameUI.documentId;
+    result.assetCount = Object.keys(payload.gameUI.assets).length;
+    result.markedNodes = payload.artboard.layers.filter(layer => layer.gameUI).length;
+    result.nineSlice = payload.gameUI.assets["audit.button.primary@1"].nineSlice;
+    result.passed = result.assetCount === 1 && result.markedNodes === 4;
+    const expected = await folder.createFile("locally-verified-export.json", { overwrite: true });
+    await expected.write(JSON.stringify(payload, null, 2));
+} catch (error) { result.passed = false; result.error = String(error); result.stack = error.stack; }
+const report = await folder.createFile("local-export-check.json", { overwrite: true });
+await report.write(JSON.stringify(result, null, 2));

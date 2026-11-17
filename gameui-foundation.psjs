@@ -1,0 +1,95 @@
+const ps = require("photoshop");
+const uxp = require("uxp");
+const core = require("./gameui-core.js");
+const metadataStore = require("./gameui-ps.js");
+const rootPath = "/Users/betta/.codex/visualizations/2026/11/12/01a1cd79-c50b-7c33-8865-38c38d4029ff/lanhu-gameui-mvp-20261116";
+const fs = uxp.storage.localFileSystem;
+const report = { stage: "start", host: ps.app.version, checks: {} };
+
+async function write(name, value) {
+    const folder = await fs.getEntryWithUrl("file:" + rootPath);
+    const file = await folder.createFile(name, { overwrite: true });
+    await file.write(JSON.stringify(value, null, 2));
+}
+
+async function imageLayer(doc, name, pixels, width, height, left, top) {
+    const layer = await doc.createLayer({ name });
+    const imageData = await ps.imaging.createImageDataFromBuffer(pixels, {
+        width, height, components: 4, colorSpace: "RGB", colorProfile: "sRGB IEC61966-2.1"
+    });
+    try {
+        await ps.imaging.putPixels({ documentID: doc.id, layerID: layer.id, imageData,
+            targetBounds: { left, top }, replace: true });
+    } finally { imageData.dispose(); }
+    return layer;
+}
+
+async function main() {
+    for (const open of ps.app.documents) {
+        if (open.name === "LanhuGameUIFoundation20261116") {
+            await open.close(ps.constants.SaveOptions.DONOTSAVECHANGES);
+        }
+    }
+    const doc = await ps.app.documents.add({ width: 640, height: 560, resolution: 72,
+        name: "LanhuGameUIFoundation20261116", mode: ps.constants.NewDocumentMode.RGB });
+    report.documentId = doc.id;
+    const pixels = new Uint8Array(128 * 64 * 4);
+    for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 128; x++) {
+            const edgeX = x < 24 || x >= 104;
+            const edgeY = y < 20 || y >= 44;
+            const color = edgeX && edgeY ? [180, 50, 40, 255] :
+                edgeX ? [40, 90, 170, 255] : edgeY ? [40, 150, 80, 255] : [230, 180, 40, 255];
+            pixels.set(color, (y * 128 + x) * 4);
+        }
+    }
+    const border = { left: 24, top: 20, right: 24, bottom: 20, unit: "sourcePixel", center: "stretch" };
+    const source = await imageLayer(doc, "-h-AuditNineSource", pixels, 128, 64, 32, 40);
+    const assetRef = "audit.button.primary@1";
+    const metadata = { schemaVersion: 1, documentId: core.createId(), artboardId: core.createId(),
+        revision: "foundation-A", nodes: {}, assets: {}, requiredCapabilities: ["nineSlice.v1"] };
+    metadata.assets[assetRef] = { assetKey: "audit.button.primary", version: 1,
+        sourceLayerId: source.id, sourceSize: { width: 128, height: 64 }, nineSlice: border };
+    metadata.nodes[source.id] = { nodeId: core.createId(), kind: "resourceSource", assetRef };
+    const sizes = [[240, 64, 32, 160], [360, 64, 32, 280], [240, 96, 32, 400]];
+    for (const [width, height, left, top] of sizes) {
+        const image = core.renderNineSlice(pixels, 128, 64, border, width, height);
+        const layer = await imageLayer(doc, "-h-AuditNine" + width + "x" + height,
+            image, width, height, left, top);
+        metadata.nodes[layer.id] = { nodeId: core.createId(), kind: "image", assetRef,
+            renderMode: "nineSlice", nativeImageUsage: "validationReference" };
+    }
+    report.stage = "write-xmp";
+    await metadataStore.writeMetadata(doc.id, metadata);
+    report.checks.immediateXmpReadback = true;
+    const path = await fs.createEntryWithUrl("file:" + rootPath + "/LanhuGameUIFoundation20261116.psd", { overwrite: true });
+    await doc.saveAs.psd(path, { layers: true }, false);
+    report.stage = "reopen";
+    await doc.close(ps.constants.SaveOptions.DONOTSAVECHANGES);
+    const reopened = await ps.app.open(path);
+    const readback = (await metadataStore.readMetadata(reopened.id)).metadata;
+    report.checks.savedReopenedXmp = JSON.stringify(readback) === JSON.stringify(metadata);
+    if (!report.checks.savedReopenedXmp) throw new Error("Metadata or identities changed after save/reopen.");
+    report.metadata = readback;
+    report.stage = "export-source";
+    const readPixels = await ps.imaging.getPixels({ documentID: reopened.id, layerID: source.id,
+        sourceBounds: { left: 32, top: 40, right: 160, bottom: 104 }, colorSpace: "RGB",
+        colorProfile: "sRGB IEC61966-2.1", componentSize: 8, applyAlpha: true });
+    try {
+        const png = await ps.imaging.encodeImageData({ imageData: readPixels.imageData });
+        const folder = await fs.getEntryWithUrl("file:" + rootPath);
+        const output = await folder.createFile("ps-source.png", { overwrite: true });
+        await output.write(png, { format: uxp.storage.formats.binary });
+        report.sourceBounds = readPixels.sourceBounds;
+        report.checks.originalSourceExported = true;
+    } finally { readPixels.imageData.dispose(); }
+    const data = await ps.action.batchPlay([{ _obj: "get", _target: [
+        { _property: "json" }, { _ref: "document", _id: reopened.id }],
+        getTextStyles: true, getFullTextStyles: true, getDefaultLayerFX: true, getPathData: true }], {});
+    await write("ps-document-source.json", JSON.parse(data[0].json));
+    report.stage = "complete";
+}
+
+try { await main(); }
+catch (error) { report.error = String(error); report.stack = error.stack; }
+await write("foundation-result.json", report);

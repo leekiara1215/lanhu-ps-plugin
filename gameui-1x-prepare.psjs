@@ -1,0 +1,61 @@
+const ps = require("photoshop");
+const uxp = require("uxp");
+const store = require("./gameui-ps.js");
+const root = "/Users/betta/.codex/visualizations/2026/11/12/01a1cd79-c50b-7c33-8865-38c38d4029ff";
+const fs = uxp.storage.localFileSystem;
+const output = await fs.getEntryWithUrl("file:" + root + "/lanhu-gameui-1x-20261117");
+const input = await fs.getEntryWithUrl("file:" + root + "/lanhu-gameui-mvp-20261116");
+const report = { stage: "start", documents: [] };
+
+function find(layers, id) {
+    for (const layer of layers) {
+        if (String(layer.id) === id) return layer;
+        const nested = layer.layers && find(layer.layers, id);
+        if (nested) return nested;
+    }
+}
+
+try {
+    for (const name of ["LanhuGameUIFoundation20261116", "LanhuGameUIFoundation20261116Second"]) {
+        const path = await input.getEntry(name + ".psd");
+        const doc = ps.app.documents.find(d => d.name === name || d.name === name + ".psd") || await ps.app.open(path);
+        const metadata = (await store.readMetadata(doc.id)).metadata;
+        if (!metadata || !(metadata.assets["audit.button.primary@1"] || metadata.assets["audit.button.primary@2"])) {
+            throw new Error("Expected the original isolated audit PSD and resource version.");
+        }
+        const asset = metadata.assets["audit.button.primary@1"] || metadata.assets["audit.button.primary@2"];
+        delete metadata.assets["audit.button.primary@1"];
+        asset.version = 2;
+        metadata.assets["audit.button.primary@2"] = asset;
+        for (const marker of Object.values(metadata.nodes)) marker.assetRef = "audit.button.primary@2";
+        metadata.revision = "source-1x-A";
+        await store.writeMetadata(doc.id, metadata);
+        await doc.save();
+        const entry = { name, documentId: doc.id, metadata, pixels: [] };
+        report.documents.push(entry);
+        for (const id of Object.keys(metadata.nodes)) {
+            const layer = find(doc.layers, id);
+            if (!layer) throw new Error("Missing test layer " + id);
+            const bounds = layer.boundsNoEffects;
+            const image = await ps.imaging.getPixels({ documentID: doc.id, layerID: layer.id,
+                sourceBounds: { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom },
+                colorSpace: "RGB", colorProfile: "sRGB IEC61966-2.1",
+                componentSize: 8, applyAlpha: false });
+            try {
+                const data = await image.imageData.getData({ chunky: true });
+                const fileName = name + "-layer-" + id + ".raw";
+                const file = await output.createFile(fileName, { overwrite: true });
+                await file.write(data, { format: uxp.storage.formats.binary });
+                entry.pixels.push({ id, name: layer.name, file: fileName,
+                    width: image.imageData.width, height: image.imageData.height,
+                    components: image.imageData.components, componentSize: image.imageData.componentSize,
+                    sourceBounds: image.sourceBounds, level: image.level });
+            } finally { image.imageData.dispose(); }
+        }
+    }
+    report.stage = "complete";
+} catch (error) {
+    report.error = String(error);
+    report.stack = error.stack;
+}
+await (await output.createFile("ps-1x-oracle.json", { overwrite: true })).write(JSON.stringify(report, null, 2));

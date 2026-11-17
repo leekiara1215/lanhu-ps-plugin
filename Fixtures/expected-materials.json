@@ -1,0 +1,468 @@
+{
+  "fixtureVersion": 1,
+  "assets": [
+    {
+      "resourceKey": "asymmetric-point",
+      "sourceSize": {
+        "width": 64,
+        "height": 48
+      },
+      "nineSlice": {
+        "left": 7,
+        "top": 5,
+        "right": 11,
+        "bottom": 9,
+        "unit": "sourcePixel",
+        "center": "stretch"
+      },
+      "sampling": {
+        "filterMode": "Point"
+      },
+      "source": {
+        "png": "asymmetric-point-source.png",
+        "rgba": "asymmetric-point-source.rgba",
+        "rgbaSha256": "d9b5c075a9d52379b200e8b2b3086949515844d628d0db2c656b4cae2a6e41e7"
+      },
+      "references": [
+        {
+          "width": 128,
+          "height": 80,
+          "pointReference": {
+            "png": "asymmetric-point-128x80-point.png",
+            "rgba": "asymmetric-point-128x80-point.rgba",
+            "rgbaSha256": "41dc93356c106dfccf780181b0a0fec7b0080d9302f860ddee7c47c01365a0df"
+          },
+          "bilinearReference": {
+            "png": "asymmetric-point-128x80-bilinear.png",
+            "rgba": "asymmetric-point-128x80-bilinear.rgba",
+            "rgbaSha256": "bbf36862e2eddaa1a9af25d433c82647c64005730f6302f00d4322dd28bbe860"
+          }
+        },
+        {
+          "width": 192,
+          "height": 96,
+          "pointReference": {
+            "png": "asymmetric-point-192x96-point.png",
+            "rgba": "asymmetric-point-192x96-point.rgba",
+            "rgbaSha256": "42a25605f62a630323497c4a5bd7fcbf25b851f94e1530e956d4ea66e1aef6a2"
+          },
+          "bilinearReference": {
+            "png": "asymmetric-point-192x96-bilinear.png",
+            "rgba": "asymmetric-point-192x96-bilinear.rgba",
+            "rgbaSha256": "f31fe1a5fc8fb50a45c92320d7c8dd5d81a9598172844608578af0311cb79066"
+          }
+        },
+        {
+          "width": 96,
+          "height": 128,
+          "pointReference": {
+            "png": "asymmetric-point-96x128-point.png",
+            "rgba": "asymmetric-point-96x128-point.rgba",
+            "rgbaSha256": "0facb1d3cb7aad7444951c29413cbe47472d5fdedbf807ddc6d1bb0542e070d0"
+          },
+          "bilinearReference": {
+            "png": "asymmetric-point-96x128-bilinear.png",
+            "rgba": "asymmetric-point-96x128-bilinear.rgba",
+            "rgbaSha256": "c021fbb0204056b23b34ce199f69fb5f23ade2e7460812c20ea5529688c5b44b"
+          }
+        }
+      ]
+    },
+    {
+      "resourceKey": "transparent-point",
+      "sourceSize": {
+        "width": 64,
+        "height": 48
+      },
+      "nineSlice": {
+        "left": 7,
+        "top": 5,
+        "right": 11,
+        "bottom": 9,
+        "unit": "sourcePixel",
+        "center": "stretch"
+      },
+      "sampling": {
+        "filterMode": "Point"
+      },
+      "source": {
+        "png": "transparent-point-source.png",
+        "rgba": "transparent-point-source.rgba",
+        "rgbaSha256": "6414d26977c59639d925f27aabc8c5d84bdd3b77bb85015bf3ecff8644f6055f"
+      },
+      "references": [
+        {
+          "width": 128,
+          "height": 80,
+          "pointReference": {
+            "png": "transparent-point-128x80-point.png",
+            "rgba": "transparent-point-128x80-point.rgba",
+            "rgbaSha256": "9bd12074d5717d58ade6111be96453819a57651cd18333435178702b11f80828"
+          },
+          "bilinearReference": {
+            "png": "transparent-point-128x80-bilinear.png",
+            "rgba": "transparent-point-128x80-bilinear.rgba",
+            "rgbaSha256": "03a8b366c2308f4ad2bc3aa7d7d88ce796a1e73d8f5587d00d11d9f527b55a70"
+          }
+        },
+        {
+          "width": 192,
+          "height": 96,
+          "pointReference": {
+            "png": "transparent-point-192x96-point.png",
+            "rgba": "transparent-point-192x96-point.rgba",
+            "rgbaSha256": "f2fe1478bd18f4257e8dab99e037ce49c561ac8ea47b5b6975ed18a631e4f5f2"
+          },
+          "bilinearReference": {
+            "png": "transparent-point-192x96-bilinear.png",
+            "rgba": "transparent-point-192x96-bilinear.rgba",
+            "rgbaSha256": "9df00cde35b17fb943996f2db0495c2f1436068da92d38ef7687934e38cef69d"
+          }
+        },
+        {
+          "width": 96,
+          "height": 128,
+          "pointReference": {
+            "png": "transparent-point-96x128-point.png",
+            "rgba": "transparent-point-96x128-point.rgba",
+            "rgbaSha256": "013bec52ca2f9c9d642ecf3979dbe8ce7bae1ad56363873512f03799e1f048b8"
+          },
+          "bilinearReference": {
+            "png": "transparent-point-96x128-bilinear.png",
+            "rgba": "transparent-point-96x128-bilinear.rgba",
+            "rgbaSha256": "bcc6bc164e2e0cfdc2719f16e5b75841461df29e5cf5ede27deee6f1edf703e0"
+          }
+        }
+      ]
+    },
+    {
+      "resourceKey": "soft-bilinear",
+      "sourceSize": {
+        "width": 64,
+        "height": 48
+      },
+      "nineSlice": {
+        "left": 7,
+        "top": 5,
+        "right": 11,
+        "bottom": 9,
+        "unit": "sourcePixel",
+        "center": "stretch"
+      },
+      "sampling": {
+        "filterMode": "Bilinear"
+      },
+      "source": {
+        "png": "soft-bilinear-source.png",
+        "rgba": "soft-bilinear-source.rgba",
+        "rgbaSha256": "0e2ba3e06c9c43c56d7cd5b66172960919de9bd3bb5fc316bff885c07b373039"
+      },
+      "references": [
+        {
+          "width": 128,
+          "height": 80,
+          "pointReference": {
+            "png": "soft-bilinear-128x80-point.png",
+            "rgba": "soft-bilinear-128x80-point.rgba",
+            "rgbaSha256": "b55b9d8d866c92f8f770abfd604db030ec7cc5ab2c5d2baa179a22236c8c6d43"
+          },
+          "bilinearReference": {
+            "png": "soft-bilinear-128x80-bilinear.png",
+            "rgba": "soft-bilinear-128x80-bilinear.rgba",
+            "rgbaSha256": "13e5835a1b796485cf6e74082910e4fb2243239b79c7e14b74ae0ad631267808"
+          }
+        },
+        {
+          "width": 192,
+          "height": 96,
+          "pointReference": {
+            "png": "soft-bilinear-192x96-point.png",
+            "rgba": "soft-bilinear-192x96-point.rgba",
+            "rgbaSha256": "8cac90cb096348d7c73463d23c1afb8a9aae3b09de0d7b733ef5c56f2c713de8"
+          },
+          "bilinearReference": {
+            "png": "soft-bilinear-192x96-bilinear.png",
+            "rgba": "soft-bilinear-192x96-bilinear.rgba",
+            "rgbaSha256": "0fcf725cc715c66c2f1e7804c9dd4af34d8d2dfc3e2fca620bed6b1449bf5ee7"
+          }
+        },
+        {
+          "width": 96,
+          "height": 128,
+          "pointReference": {
+            "png": "soft-bilinear-96x128-point.png",
+            "rgba": "soft-bilinear-96x128-point.rgba",
+            "rgbaSha256": "f8b3d5b4787da90d6683b3320d685de4e9bc011890a86cfb5509ac2227137c35"
+          },
+          "bilinearReference": {
+            "png": "soft-bilinear-96x128-bilinear.png",
+            "rgba": "soft-bilinear-96x128-bilinear.rgba",
+            "rgbaSha256": "ec3129458ab6beb93a7ea54a025bf02943418e936b4aac4ce6ba752bcc6da7f4"
+          }
+        }
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "name": "LanhuGameUIProductionFirst20261117",
+      "width": 900,
+      "height": 700,
+      "expectedResourceCount": 3,
+      "expectedInstanceCount": 9,
+      "expectedDocumentIdentity": "assign-once-in-panel-1",
+      "layers": [
+        {
+          "name": "SyntheticSource-asymmetric-point",
+          "resourceKey": "asymmetric-point",
+          "role": "authoring-input",
+          "file": "asymmetric-point-source.rgba",
+          "width": 64,
+          "height": 48,
+          "left": 32,
+          "top": 32
+        },
+        {
+          "name": "SyntheticInstance-asymmetric-point-128x80",
+          "resourceKey": "asymmetric-point",
+          "role": "instance",
+          "file": "asymmetric-point-128x80-point.rgba",
+          "width": 128,
+          "height": 80,
+          "left": 32,
+          "top": 140
+        },
+        {
+          "name": "SyntheticInstance-asymmetric-point-192x96",
+          "resourceKey": "asymmetric-point",
+          "role": "instance",
+          "file": "asymmetric-point-192x96-point.rgba",
+          "width": 192,
+          "height": 96,
+          "left": 32,
+          "top": 310
+        },
+        {
+          "name": "SyntheticInstance-asymmetric-point-96x128",
+          "resourceKey": "asymmetric-point",
+          "role": "instance",
+          "file": "asymmetric-point-96x128-point.rgba",
+          "width": 96,
+          "height": 128,
+          "left": 32,
+          "top": 480
+        },
+        {
+          "name": "SyntheticSource-transparent-point",
+          "resourceKey": "transparent-point",
+          "role": "authoring-input",
+          "file": "transparent-point-source.rgba",
+          "width": 64,
+          "height": 48,
+          "left": 312,
+          "top": 32
+        },
+        {
+          "name": "SyntheticInstance-transparent-point-128x80",
+          "resourceKey": "transparent-point",
+          "role": "instance",
+          "file": "transparent-point-128x80-point.rgba",
+          "width": 128,
+          "height": 80,
+          "left": 312,
+          "top": 140
+        },
+        {
+          "name": "SyntheticInstance-transparent-point-192x96",
+          "resourceKey": "transparent-point",
+          "role": "instance",
+          "file": "transparent-point-192x96-point.rgba",
+          "width": 192,
+          "height": 96,
+          "left": 312,
+          "top": 310
+        },
+        {
+          "name": "SyntheticInstance-transparent-point-96x128",
+          "resourceKey": "transparent-point",
+          "role": "instance",
+          "file": "transparent-point-96x128-point.rgba",
+          "width": 96,
+          "height": 128,
+          "left": 312,
+          "top": 480
+        },
+        {
+          "name": "SyntheticSource-soft-bilinear",
+          "resourceKey": "soft-bilinear",
+          "role": "authoring-input",
+          "file": "soft-bilinear-source.rgba",
+          "width": 64,
+          "height": 48,
+          "left": 592,
+          "top": 32
+        },
+        {
+          "name": "SyntheticInstance-soft-bilinear-128x80",
+          "resourceKey": "soft-bilinear",
+          "role": "instance",
+          "file": "soft-bilinear-128x80-bilinear.rgba",
+          "width": 128,
+          "height": 80,
+          "left": 592,
+          "top": 140
+        },
+        {
+          "name": "SyntheticInstance-soft-bilinear-192x96",
+          "resourceKey": "soft-bilinear",
+          "role": "instance",
+          "file": "soft-bilinear-192x96-bilinear.rgba",
+          "width": 192,
+          "height": 96,
+          "left": 592,
+          "top": 310
+        },
+        {
+          "name": "SyntheticInstance-soft-bilinear-96x128",
+          "resourceKey": "soft-bilinear",
+          "role": "instance",
+          "file": "soft-bilinear-96x128-bilinear.rgba",
+          "width": 96,
+          "height": 128,
+          "left": 592,
+          "top": 480
+        }
+      ]
+    },
+    {
+      "name": "LanhuGameUIProductionSecond20261117",
+      "width": 900,
+      "height": 700,
+      "expectedResourceCount": 3,
+      "expectedInstanceCount": 9,
+      "expectedDocumentIdentity": "assign-once-in-panel-2",
+      "layers": [
+        {
+          "name": "SyntheticSource-asymmetric-point",
+          "resourceKey": "asymmetric-point",
+          "role": "authoring-input",
+          "file": "asymmetric-point-source.rgba",
+          "width": 64,
+          "height": 48,
+          "left": 32,
+          "top": 32
+        },
+        {
+          "name": "SyntheticInstance-asymmetric-point-128x80",
+          "resourceKey": "asymmetric-point",
+          "role": "instance",
+          "file": "asymmetric-point-128x80-point.rgba",
+          "width": 128,
+          "height": 80,
+          "left": 32,
+          "top": 140
+        },
+        {
+          "name": "SyntheticInstance-asymmetric-point-192x96",
+          "resourceKey": "asymmetric-point",
+          "role": "instance",
+          "file": "asymmetric-point-192x96-point.rgba",
+          "width": 192,
+          "height": 96,
+          "left": 32,
+          "top": 310
+        },
+        {
+          "name": "SyntheticInstance-asymmetric-point-96x128",
+          "resourceKey": "asymmetric-point",
+          "role": "instance",
+          "file": "asymmetric-point-96x128-point.rgba",
+          "width": 96,
+          "height": 128,
+          "left": 32,
+          "top": 480
+        },
+        {
+          "name": "SyntheticSource-transparent-point",
+          "resourceKey": "transparent-point",
+          "role": "authoring-input",
+          "file": "transparent-point-source.rgba",
+          "width": 64,
+          "height": 48,
+          "left": 312,
+          "top": 32
+        },
+        {
+          "name": "SyntheticInstance-transparent-point-128x80",
+          "resourceKey": "transparent-point",
+          "role": "instance",
+          "file": "transparent-point-128x80-point.rgba",
+          "width": 128,
+          "height": 80,
+          "left": 312,
+          "top": 140
+        },
+        {
+          "name": "SyntheticInstance-transparent-point-192x96",
+          "resourceKey": "transparent-point",
+          "role": "instance",
+          "file": "transparent-point-192x96-point.rgba",
+          "width": 192,
+          "height": 96,
+          "left": 312,
+          "top": 310
+        },
+        {
+          "name": "SyntheticInstance-transparent-point-96x128",
+          "resourceKey": "transparent-point",
+          "role": "instance",
+          "file": "transparent-point-96x128-point.rgba",
+          "width": 96,
+          "height": 128,
+          "left": 312,
+          "top": 480
+        },
+        {
+          "name": "SyntheticSource-soft-bilinear",
+          "resourceKey": "soft-bilinear",
+          "role": "authoring-input",
+          "file": "soft-bilinear-source.rgba",
+          "width": 64,
+          "height": 48,
+          "left": 592,
+          "top": 32
+        },
+        {
+          "name": "SyntheticInstance-soft-bilinear-128x80",
+          "resourceKey": "soft-bilinear",
+          "role": "instance",
+          "file": "soft-bilinear-128x80-bilinear.rgba",
+          "width": 128,
+          "height": 80,
+          "left": 592,
+          "top": 140
+        },
+        {
+          "name": "SyntheticInstance-soft-bilinear-192x96",
+          "resourceKey": "soft-bilinear",
+          "role": "instance",
+          "file": "soft-bilinear-192x96-bilinear.rgba",
+          "width": 192,
+          "height": 96,
+          "left": 592,
+          "top": 310
+        },
+        {
+          "name": "SyntheticInstance-soft-bilinear-96x128",
+          "resourceKey": "soft-bilinear",
+          "role": "instance",
+          "file": "soft-bilinear-96x128-bilinear.rgba",
+          "width": 96,
+          "height": 128,
+          "left": 592,
+          "top": 480
+        }
+      ]
+    }
+  ]
+}

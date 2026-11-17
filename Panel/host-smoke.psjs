@@ -1,0 +1,74 @@
+const ps = require("photoshop");
+const uxp = require("uxp");
+const store = require("../gameui-ps.js");
+const authoring = require("../gameui-authoring.js");
+const fs = uxp.storage.localFileSystem;
+const expectedDocuments = ["LanhuGameUIProductionFirst20261117.psd", "LanhuGameUIProductionSecond20261117.psd"];
+const sources = [
+    { id: 3, name: "SyntheticSource-asymmetric-point", left: 32, padding: 0 },
+    { id: 7, name: "SyntheticSource-transparent-point", left: 312, padding: 2 },
+    { id: 11, name: "SyntheticSource-soft-bilinear", left: 592, padding: 2 }
+];
+const report = { stage: "start", hostVersion: ps.app.version, readOnlyOriginalPsd: true, temporaryCopyPixelsOnly: true, documents: [] };
+const output = await fs.getFolder();
+if (output) {
+    try {
+        for (const name of expectedDocuments) {
+            const doc = ps.app.documents.find(value => value.name === name);
+            if (!doc) throw new Error("Expected fixed synthetic PSD is not open: " + name);
+            const entry = { name, documentId: doc.id, mode: doc.mode, depth: doc.bitsPerChannel,
+                colorProfile: doc.colorProfileName, sources: [] };
+            report.documents.push(entry);
+            const layers = store.flattenLayers(doc.layers);
+            for (const expected of sources) {
+                report.stage = name + "/" + expected.name;
+                const layer = layers.find(value => value.id === expected.id);
+                if (!layer || layer.name !== expected.name) throw new Error("Fixed fixture layer ID/name mismatch: " + expected.name);
+                const bounds = layer.boundsNoEffects, inset = expected.padding;
+                const nativeBounds = { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
+                const item = { layerId: layer.id, name: layer.name, bounds: nativeBounds, padding: inset };
+                entry.sources.push(item);
+                if (nativeBounds.left !== expected.left + inset || nativeBounds.top !== 32 + inset ||
+                    nativeBounds.right !== expected.left + 64 - inset || nativeBounds.bottom !== 80 - inset) {
+                    throw new Error("Fixed fixture bounds mismatch: " + expected.name + " " + JSON.stringify(nativeBounds));
+                }
+                const snapshot = await store.captureLayerSource(doc, layer, { left: inset, top: inset, right: inset, bottom: inset });
+                if (snapshot.width !== 64 || snapshot.height !== 48) throw new Error("Fixture source canvas was not preserved at 64x48.");
+                const bytes = authoring.unbase64(snapshot.pngBase64);
+                const fileName = name.replace(/\.psd$/, "") + "-" + expected.name + "-host-source.png";
+                const file = await output.createFile(fileName, { overwrite: true });
+                await file.write(bytes.buffer, { format: uxp.storage.formats.binary });
+                item.snapshot = snapshot;
+                item.pngFile = fileName;
+                item.checks = { rgba8PngDecoded: authoring.decodeSnapshot(snapshot).length === 64 * 48 * 4,
+                    sourceCanvas64x48: true };
+            }
+            report.stage = name + "/temporary-copy-apply";
+            let copy;
+            try {
+                copy = await doc.duplicate("LanhuGameUITargetSmokeTemporary20261117");
+                const candidates = store.flattenLayers(copy.layers).filter(layer => layer.name === "SyntheticSource-transparent-point");
+                if (candidates.length !== 1) throw new Error("Temporary fixture copy has ambiguous source layer names.");
+                const layer = candidates[0];
+                const source = entry.sources.find(item => item.name === "SyntheticSource-transparent-point").snapshot;
+                const initial = authoring.targetFromPixels(authoring.decodeSnapshot(source), 64, 48);
+                const asset = { sourceSize: { width: 64, height: 48 }, sampling: { filterMode: "Point" },
+                    nineSlice: { left: 8, top: 8, right: 8, bottom: 8, unit: "sourcePixel", center: "stretch" } };
+                const target = await store.applyLayerPreview(copy, layer, source, asset, 128, 80, initial);
+                const b = layer.boundsNoEffects;
+                entry.targetApply = { temporaryDocumentId: copy.id, layerId: layer.id, target,
+                    nativeContentBounds: { left: b.left, top: b.top, right: b.right, bottom: b.bottom },
+                    restoredCanvasOrigin: store.assertTargetLayer(layer, target), saved: false };
+                if (target.width !== 128 || target.height !== 80 || target.insetLeft !== 2 || target.insetTop !== 2 ||
+                    target.contentWidth !== 124 || target.contentHeight !== 76 || b.left !== 314 || b.top !== 34) {
+                    throw new Error("128x80 target canvas / 124x76 native content did not match the fixed transparent fixture.");
+                }
+                entry.targetApply.checks = { fullCanvas128x80: true, nativeContent124x76: true,
+                    canvasOrigin312x32: entry.targetApply.restoredCanvasOrigin.left === 312 && entry.targetApply.restoredCanvasOrigin.top === 32 };
+            } finally { if (copy) await copy.close(ps.constants.SaveOptions.DONOTSAVECHANGES); }
+        }
+        report.stage = "complete";
+    } catch (error) { report.error = String(error); report.stack = error.stack; }
+    const file = await output.createFile("gameui-panel-target-host-smoke-result.json", { overwrite: true });
+    await file.write(JSON.stringify(report, null, 2));
+}

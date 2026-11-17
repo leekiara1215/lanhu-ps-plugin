@@ -1,0 +1,103 @@
+const ps = require("photoshop");
+const uxp = require("uxp");
+const core = require("./gameui-core.js");
+const store = require("./gameui-ps.js");
+const root = "/Users/betta/.codex/visualizations/2026/11/12/01a1cd79-c50b-7c33-8865-38c38d4029ff";
+const fs = uxp.storage.localFileSystem;
+const input = await fs.getEntryWithUrl("file:" + root + "/lanhu-gameui-mvp-20261116");
+const output = await fs.getEntryWithUrl("file:" + root + "/lanhu-gameui-sampling-20261117");
+const report = { stage: "start", documents: [] };
+
+function find(layers, id) {
+    for (const layer of layers) {
+        if (String(layer.id) === String(id)) return layer;
+        const nested = layer.layers && find(layer.layers, id);
+        if (nested) return nested;
+    }
+}
+
+async function pixels(doc, layer) {
+    const b = layer.boundsNoEffects;
+    const value = await ps.imaging.getPixels({ documentID: doc.id, layerID: layer.id,
+        sourceBounds: { left: b.left, top: b.top, right: b.right, bottom: b.bottom },
+        colorSpace: "RGB", colorProfile: "sRGB IEC61966-2.1", componentSize: 8, applyAlpha: false });
+    try {
+        if (value.imageData.components !== 4) throw new Error("Expected an RGBA test layer.");
+        return { width: value.imageData.width, height: value.imageData.height,
+            data: await value.imageData.getData({ chunky: true }) };
+    } finally { value.imageData.dispose(); }
+}
+
+async function addLayer(doc, name, data, width, height, left, top) {
+    const existing = doc.layers.find(layer => layer.name === name);
+    if (existing) return existing;
+    const layer = await doc.createLayer({ name });
+    const imageData = await ps.imaging.createImageDataFromBuffer(data, {
+        width, height, components: 4, colorSpace: "RGB", colorProfile: "sRGB IEC61966-2.1"
+    });
+    try {
+        await ps.imaging.putPixels({ documentID: doc.id, layerID: layer.id, imageData,
+            targetBounds: { left, top }, replace: true });
+    } finally { imageData.dispose(); }
+    return layer;
+}
+
+try {
+    for (const name of ["LanhuGameUIFoundation20261116", "LanhuGameUIFoundation20261116Second"]) {
+        const path = await input.getEntry(name + ".psd");
+        let doc = ps.app.documents.find(d => d.name === name || d.name === name + ".psd") || await ps.app.open(path);
+        const metadata = (await store.readMetadata(doc.id)).metadata;
+        const pointRef = "audit.button.primary@3";
+        const bilinearRef = "audit.button.bilinear@1";
+        const original = metadata && (metadata.assets["audit.button.primary@2"] || metadata.assets[pointRef]);
+        if (!original || (doc.width !== 640 && doc.width !== 1280) || doc.height !== 560) {
+            throw new Error("Expected only the isolated 1x audit PSD.");
+        }
+        const source = find(doc.layers, original.sourceLayerId);
+        const raw = await pixels(doc, source);
+        if (raw.width !== 128 || raw.height !== 64) throw new Error("Unexpected source dimensions.");
+        if (doc.width !== 1280) await doc.resizeCanvas(1280, 560, ps.constants.AnchorPosition.TOPLEFT);
+        delete metadata.assets["audit.button.primary@2"];
+        original.version = 3;
+        original.sampling = { filterMode: "Point" };
+        metadata.assets[pointRef] = original;
+        for (const marker of Object.values(metadata.nodes)) {
+            if (marker.assetRef === "audit.button.primary@2") marker.assetRef = pointRef;
+        }
+        const bilinearSource = await addLayer(doc, "-h-AuditBilinearSource", raw.data, 128, 64, 672, 40);
+        metadata.assets[bilinearRef] = { assetKey: "audit.button.bilinear", version: 1,
+            sourceLayerId: bilinearSource.id, sourceSize: { width: 128, height: 64 },
+            nineSlice: JSON.parse(JSON.stringify(original.nineSlice)), sampling: { filterMode: "Bilinear" } };
+        metadata.nodes[bilinearSource.id] = metadata.nodes[bilinearSource.id] ||
+            { nodeId: core.createId(), kind: "resourceSource", assetRef: bilinearRef };
+        for (const [width, height, top] of [[240, 64, 160], [360, 64, 280], [240, 96, 400]]) {
+            const layer = await addLayer(doc, "-h-AuditBilinear" + width + "x" + height,
+                core.renderNineSlice(raw.data, 128, 64, original.nineSlice, width, height), width, height, 672, top);
+            metadata.nodes[layer.id] = metadata.nodes[layer.id] || { nodeId: core.createId(), kind: "image",
+                assetRef: bilinearRef, renderMode: "nineSlice", nativeImageUsage: "validationReference" };
+        }
+        metadata.requiredCapabilities = ["nineSlice.v1", "sampling.v1"];
+        metadata.revision = "sampling-A";
+        await store.writeMetadata(doc.id, metadata);
+        await doc.save();
+        await doc.close(ps.constants.SaveOptions.DONOTSAVECHANGES);
+        doc = await ps.app.open(path);
+        const saved = (await store.readMetadata(doc.id)).metadata;
+        if (JSON.stringify(saved) !== JSON.stringify(metadata)) throw new Error("Sampling XMP changed after save/reopen.");
+        const entry = { name, width: doc.width, height: doc.height, documentId: doc.id, metadata: saved, pixels: [] };
+        report.documents.push(entry);
+        for (const [id, marker] of Object.entries(saved.nodes)) {
+            const layer = find(doc.layers, id);
+            const value = await pixels(doc, layer);
+            const file = name + "-layer-" + id + ".raw";
+            await (await output.createFile(file, { overwrite: true })).write(value.data, { format: uxp.storage.formats.binary });
+            entry.pixels.push({ id, name: layer.name, nodeId: marker.nodeId, assetRef: marker.assetRef,
+                kind: marker.kind, width: value.width, height: value.height, file });
+        }
+    }
+    report.stage = "complete";
+} catch (error) {
+    report.error = String(error);
+    report.stack = error.stack;
+}
+await (await output.createFile("ps-sampling-oracle.json", { overwrite: true })).write(JSON.stringify(report, null, 2));

@@ -1,0 +1,77 @@
+const ps = require("photoshop");
+const uxp = require("uxp");
+const fs = uxp.storage.localFileSystem;
+const report = { stage: "not-started", host: ps.app.version, executionChannel: "standalone-psjs",
+    syntheticOnly: true, panelAcceptance: "pending", documents: [] };
+const expectedNames = ["LanhuGameUIProductionFirst20261117", "LanhuGameUIProductionSecond20261117"];
+
+// The integration owner runs this manually and selects Fixtures/generated or
+// its isolated audit copy. This script never reads or writes gameUI/XMP.
+const folder = await fs.getFolder();
+if (!folder) throw new Error("Select the generated synthetic fixture folder.");
+
+async function main() {
+    const manifest = JSON.parse(await (await folder.getEntry("manifest.json")).read());
+    if (manifest.fixtureVersion !== 1 || manifest.syntheticOnly !== true ||
+        manifest.testProjectId !== "cfea1199-7c07-48d9-86ef-cdbd3385c237" ||
+        JSON.stringify(manifest.documents.map(doc => doc.name)) !== JSON.stringify(expectedNames)) {
+        throw new Error("Expected only the isolated production fixture manifest.");
+    }
+    for (const spec of manifest.documents) {
+        if (spec.width !== 900 || spec.height !== 700 || spec.layers.length !== 12) {
+            throw new Error("Unexpected synthetic document dimensions or layer count.");
+        }
+        if (ps.app.documents.some(doc => doc.name === spec.name || doc.name === spec.name + ".psd")) {
+            throw new Error("Close the named synthetic document before generation; existing work is never closed automatically.");
+        }
+        let existing;
+        try { existing = await folder.getEntry(spec.name + ".psd"); } catch (_) { /* Entry does not exist. */ }
+        if (existing) throw new Error("Synthetic PSD already exists; preserve it and choose a fresh audit copy.");
+        for (const layer of spec.layers) {
+            if (!/^[a-z0-9-]+\.rgba$/.test(layer.file) || !/^Synthetic(Source|Instance)-/.test(layer.name) ||
+                !Number.isInteger(layer.width) || !Number.isInteger(layer.height) ||
+                layer.width < 1 || layer.height < 1 || layer.left < 0 || layer.top < 0 ||
+                layer.left + layer.width > spec.width || layer.top + layer.height > spec.height) {
+                throw new Error("Unexpected synthetic layer specification.");
+            }
+        }
+    }
+    report.stage = "creating-synthetic-pixels";
+    for (const spec of manifest.documents) {
+        const doc = await ps.app.documents.add({ width: spec.width, height: spec.height, resolution: 72,
+            name: spec.name, mode: ps.constants.NewDocumentMode.RGB, depth: 8,
+            profile: "sRGB IEC61966-2.1", fill: ps.constants.DocumentFill.TRANSPARENT });
+        const entry = { name: spec.name, photoshopDocumentId: doc.id,
+            colorProfileName: String(doc.colorProfileName), bitsPerChannel: String(doc.bitsPerChannel),
+            layers: [], saved: false };
+        report.documents.push(entry);
+        if (doc.colorProfileName !== "sRGB IEC61966-2.1" || doc.bitsPerChannel !== ps.constants.BitsPerChannelType.EIGHT) {
+            throw new Error("Expected an actual sRGB 8-bit synthetic document.");
+        }
+        for (const item of spec.layers) {
+            const raw = new Uint8Array(await (await folder.getEntry(item.file)).read({ format: uxp.storage.formats.binary }));
+            if (raw.length !== item.width * item.height * 4) throw new Error("Unexpected synthetic RGBA byte count.");
+            const layer = await doc.createLayer({ name: item.name });
+            const imageData = await ps.imaging.createImageDataFromBuffer(raw, {
+                width: item.width, height: item.height, components: 4,
+                colorSpace: "RGB", colorProfile: "sRGB IEC61966-2.1"
+            });
+            try {
+                await ps.imaging.putPixels({ documentID: doc.id, layerID: layer.id, imageData,
+                    targetBounds: { left: item.left, top: item.top }, replace: true });
+            } finally { imageData.dispose(); }
+            entry.layers.push({ name: item.name, photoshopLayerId: layer.id, resourceKey: item.resourceKey,
+                role: item.role, width: item.width, height: item.height, left: item.left, top: item.top });
+        }
+        const output = await folder.createFile(spec.name + ".psd", { overwrite: false });
+        await doc.saveAs.psd(output, { layers: true }, false);
+        entry.saved = true;
+    }
+    report.stage = "synthetic-documents-created";
+}
+
+try { await main(); }
+catch (error) { report.error = String(error); report.stack = error.stack; }
+await (await folder.createFile("production-fixture-ps-result.json", { overwrite: true }))
+    .write(JSON.stringify(report, null, 2));
+if (report.error) throw new Error(report.error);

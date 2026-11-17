@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
+<body>
+<div id="panelViewport"><div class="panel-content">
+<h2>GameUI 公共资源</h2>
+<p class="scroll-hint">可上下滚动；目录与检查结果在面板底部。</p>
+<p class="scope">隔离试用：仅测试项目 cfea1199… 可上传。XMP 修改需随 PSD 保存；面板不负责上传。</p>
+<button id="refresh">刷新 / 检查</button><button id="initialize">初始化当前 PSD</button>
+<div id="selection">选择一个普通像素层</div>
+<section>
+<label>资源显示名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
+<div id="identityInfo">内部引用与版本由工具自动维护。</div>
+<div class="row"><label>L<input id="left" type="number" min="0" value="0"></label><label>T<input id="top" type="number" min="0" value="0"></label><label>R<input id="right" type="number" min="0" value="0"></label><label>B<input id="bottom" type="number" min="0" value="0"></label></div>
+<p>边框单位为原始源像素；中心拉伸。修改像素 / 边框 / 采样请增加版本。</p>
+<label>采样<select id="sampling"><option value="Point">Point</option><option value="Bilinear" selected>Bilinear</option></select></label>
+<p>源画布透明留白：在选层非空边界外显式补源像素。默认 0 会按非空边界裁切，原图透明外沿需在此填写；不要用九宫边框代替。</p>
+<div class="row"><label>留白 L<input id="padLeft" type="number" min="0" value="0"></label><label>T<input id="padTop" type="number" min="0" value="0"></label><label>R<input id="padRight" type="number" min="0" value="0"></label><label>B<input id="padBottom" type="number" min="0" value="0"></label></div>
+<button id="createResource">从选层新建资源</button><button id="define">更新所选资源名称</button><button id="publishVersion">发布所选资源新版本</button>
+</section>
+<section>
+<label>公共资源选择器<select id="resources"></select></label>
+<div id="resourceInfo"></div>
+<p>显式引用将以当前图层非空边界声明目标画布，不猜测原透明外沿。需要保留留白时，请引用后重新应用目标尺寸。</p>
+<button id="reference">按当前非空边界引用 / 修复绑定</button><button id="repairIdentity">选层重新生成 nodeId</button>
+<button id="copy">复制选层（继承引用）</button>
+<button id="fork">当前文档分配全新身份</button>
+<p>任意原生复制视为未绑定；通过选择器显式指定资源。文档原生复制后，使用“全新身份”。</p>
+</section>
+<section>
+<div class="row"><label>预览宽<input id="targetWidth" type="number" min="1" value="240"></label><label>预览高<input id="targetHeight" type="number" min="1" value="96"></label></div>
+<button id="preview">目标尺寸拉伸预览</button><button id="apply">应用目标尺寸到选层</button>
+<div class="checker"><img id="previewImage" alt="拉伸预览"></div>
+<p>预览在面板显示；应用操作修改选层像素，保留原始快照与身份。采样模拟供检查，Unity 实机表现由集成验收。</p>
+</section>
+<section><button id="import">导入目录 JSON</button><button id="export">导出目录 JSON</button>
+<p>目录自动维护源快照、版本与名字；导入后可跨 PSD 引用，无需在画面摆源图。</p></section>
+<div id="issues"></div><pre id="status" role="status"></pre>
+<p class="panel-end">已到面板底部</p>
+</div></div>
+<script src="panel.js"></script>
+</body></html>

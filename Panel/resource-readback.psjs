@@ -1,0 +1,47 @@
+// Read-only host verification of the two authorized, saved synthetic PSDs.
+const ps = require("photoshop");
+const uxp = require("uxp");
+const store = require("../gameui-ps.js");
+const authoring = require("../gameui-authoring.js");
+const output = await uxp.storage.localFileSystem.getFolder();
+const report = { stage: "start", hostVersion: ps.app.version, readOnlyPsd: true, documents: [] };
+if (output) {
+    try {
+        for (const suffix of ["First", "Second"]) {
+            const name = "LanhuGameUIProduction" + suffix + "20261117.psd";
+            const candidates = ps.app.documents.filter(doc => doc.name === name);
+            if (candidates.length !== 1) throw new Error("Expected exactly one open synthetic PSD: " + name);
+            const doc = candidates[0];
+            const file = await output.getEntry("saved-panel-" + suffix.toLowerCase() + "-metadata.json");
+            const saved = JSON.parse(await file.read());
+            const actual = (await store.readMetadata(doc.id)).metadata;
+            authoring.validateMetadata(actual);
+            if (JSON.stringify(actual) !== JSON.stringify(saved)) throw new Error("Reopened XMP differs from saved PSD extraction: " + name);
+            const layer = store.flattenLayers(doc.layers).find(item => item.id === 3);
+            if (!layer || layer.name !== "SyntheticSource-asymmetric-point") throw new Error("Fixed layer ID/name mismatch: " + name);
+            const marker = actual.nodes[layer.id];
+            if (!marker || marker.kind !== "image") throw new Error("Expected an explicitly marked image: " + name);
+            const asset = actual.assets[marker.assetRef];
+            const source = actual.authoring.sources[marker.assetRef];
+            const target = actual.authoring.targets[marker.nodeId];
+            if (!asset || !source || !target) throw new Error("Missing resource snapshot/target contract: " + name);
+            const origin = store.assertTargetLayer(layer, target);
+            const snapshot = await store.captureLayerSource(doc, layer);
+            if (snapshot.width !== target.contentWidth || snapshot.height !== target.contentHeight) {
+                throw new Error("Native content capture differs from target contract: " + name);
+            }
+            const pngName = "panel-" + suffix.toLowerCase() + "-" + marker.assetRef + "-" + target.width + "x" + target.height + ".png";
+            const png = await output.createFile(pngName, { overwrite: true });
+            const bytes = authoring.unbase64(snapshot.pngBase64);
+            await png.write(bytes.buffer, { format: uxp.storage.formats.binary });
+            report.documents.push({ name, documentId: actual.documentId, artboardId: actual.artboardId,
+                layerId: layer.id, nodeId: marker.nodeId, assetRef: marker.assetRef, asset,
+                target, sourceSize: { width: source.width, height: source.height },
+                canvasOrigin: origin, nativeContentSize: { width: snapshot.width, height: snapshot.height },
+                nativePng: pngName, reopenedMetadataMatchesSaved: true });
+        }
+        report.stage = "complete";
+    } catch (error) { report.error = String(error); report.stack = error.stack; }
+    const file = await output.createFile("gameui-panel-resource-readback-result.json", { overwrite: true });
+    await file.write(JSON.stringify(report, null, 2));
+}

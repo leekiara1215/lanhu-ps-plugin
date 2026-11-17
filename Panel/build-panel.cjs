@@ -1,0 +1,13 @@
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const output = process.argv[2];
+if (!output || !path.isAbsolute(output)) throw new Error("Usage: node Panel/build-panel.cjs /absolute/staging/path");
+const target = path.resolve(output);
+if (target === __dirname || target.startsWith(path.resolve(__dirname, "..") + path.sep)) throw new Error("Staging must be outside the Photoshop source tree.");
+if (fs.existsSync(target) && fs.readdirSync(target).length) throw new Error("Staging directory must be new or empty; refusing overwrite.");
+fs.mkdirSync(target, { recursive: true });
+const files = ["manifest.json", "index.html", "panel.css", "panel.js", "README.md"];
+for (const file of files) fs.copyFileSync(path.join(__dirname, file), path.join(target, file));
+for (const file of ["gameui-core.js", "gameui-ps.js", "gameui-authoring.js"]) fs.copyFileSync(path.join(__dirname, "..", file), path.join(target, file));
+console.log(JSON.stringify({ entry: path.join(target, "manifest.json"), files: files.concat(["gameui-core.js", "gameui-ps.js", "gameui-authoring.js"]) }));

@@ -1,0 +1,8 @@
+const ps = require("photoshop");
+const fs = require("uxp").storage.localFileSystem;
+const folder = await fs.getEntryWithUrl("file:/Users/betta/.codex/visualizations/2026/11/12/01a1cd79-c50b-7c33-8865-38c38d4029ff/lanhu-gameui-mvp-20261116");
+for (const name of ["LanhuGameUIFoundation20261116Second.psd", "LanhuGameUIFoundation20261116.psd"]) {
+    if (!ps.app.documents.find(doc => doc.name === name)) {
+        await ps.app.open(await folder.getEntry(name));
+    }
+}

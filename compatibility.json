@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "adapterVersion": "0.4.0-test",
+  "projectId": "cfea1199-7c07-48d9-86ef-cdbd3385c237",
+  "official": {
+    "id": "com.lanhu.ps",
+    "version": "1.0.32",
+    "build": "303",
+    "manifestVersion": 4,
+    "main": "index.html",
+    "hostApp": "PS",
+    "apiVersion": 1,
+    "manifestSha256": "5d5cd21a66772664ee00cbcc8dc7d31b920e74892d84287826e4f9059285680b",
+    "indexSha256": "067760dc58d167e413f60a8d45dc61e97ce670ba3b4564e2b68ef3d9fd594194"
+  },
+  "wireSchemaVersion": 1,
+  "authoringVersion": 1,
+  "capabilities": ["nineSlice.v1", "sampling.v1"],
+  "png": {"bitDepth": 8, "colorType": 6, "interlaced": false, "maxDimension": 8192, "maxBytes": 67108864},
+  "panelDelivery": "Separate unsigned UXP staging; load via UXP Developer Tool. No CCX signing or host installation verified.",
+  "reload": "Close Photoshop before changing adapter files; restart after every install, upgrade, uninstall or rollback. CLI does not control the host.",
+  "scope": "Isolated test project only; explicitly scoped XMP or the existing synthetic audit document names. Not a production rollout."
+}
