@@ -223,7 +223,9 @@ function host(overrides = {}) {
             state.writes.push(options);
             const { width, height } = options.imageData.options;
             const target = author.targetFromPixels(options.imageData.raw, width, height);
-            const active = doc.layers.find(value => value.id === options.layerID);
+            const targetDocument = photoshop.app.documents && photoshop.app.documents.find(value => value.id === options.documentID) || doc;
+            const active = targetDocument.layers.find(value => value.id === options.layerID);
+            active.pixelData = options.imageData.raw.slice();
             active.boundsNoEffects = { left: options.targetBounds.left + target.insetLeft,
                 top: options.targetBounds.top + target.insetTop,
                 right: options.targetBounds.left + target.insetLeft + target.contentWidth,
@@ -355,7 +357,7 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         constructor(tag) { this.tag = tag; this.children = []; this.value = ""; this.listeners = {}; this.style = {}; this._text = ""; }
         set textContent(value) { this._text = value; this.children = []; if (this.tag === "select") this.value = ""; }
         get textContent() { return this._text; }
-        appendChild(child) { this.children.push(child); if (this.tag === "select" && !this.value) this.value = child.value; }
+        appendChild(child) { this.children.push(child); if (this.tag === "select" && this.children.length === 1) this.value = child.value; }
         setAttribute(name, value) { this[name] = value; }
         addEventListener(name, callback) { this.listeners[name] = callback; }
     }
@@ -368,8 +370,27 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     elements.sampling.value = "Bilinear";
     assert.match(html, /option value="Point"/); assert.match(html, /option value="Bilinear"/);
     const env = host(); env.doc.name = "IsolatedPanelTest.psd"; env.photoshop.app.documents = [env.doc];
+    env.state.documentsXmp = {};
+    env.state.history = [];
+    env.layer.pixelData = env.data.slice();
     env.photoshop.core = { async executeAsModal(action) {
-        return action({ hostControl: { async suspendHistory() { return 1; }, async resumeHistory() {} } });
+        let before;
+        return action({ hostControl: {
+            async suspendHistory({ documentID, name }) {
+                const doc = env.photoshop.app.documents.find(value => value.id === documentID);
+                before = { doc, stored: env.state.stored, documentsXmp: { ...env.state.documentsXmp },
+                    layers: doc.layers.map(layer => ({ layer, bounds: { ...layer.boundsNoEffects }, pixelData: layer.pixelData && layer.pixelData.slice() })) };
+                env.state.history.push({ name, documentID, committed: null }); return env.state.history.length;
+            },
+            async resumeHistory(id, commit = true) {
+                env.state.history[id - 1].committed = commit;
+                if (!commit) {
+                    env.state.stored = before.stored; env.state.documentsXmp = before.documentsXmp;
+                    before.doc.layers = before.layers.map(value => value.layer);
+                    for (const value of before.layers) { value.layer.boundsNoEffects = value.bounds; value.layer.pixelData = value.pixelData; }
+                }
+            }
+        } });
     } };
     if (initialMetadata) await env.store.writeMetadata(1, initialMetadata);
     env.layer.duplicate = async () => {
@@ -378,10 +399,23 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     const originalBatch = env.photoshop.action.batchPlay;
     env.photoshop.action.batchPlay = async commands => {
         const command = commands[0];
+        const docTarget = command._target.find(value => value._ref === "document");
+        if (command._obj === "set" && env.state.failXmpWrite) throw new Error("injected XMP write failure");
+        if (command._target[0]._property === "XMPMetadataAsUTF8" && docTarget && docTarget._id !== env.doc.id) {
+            if (command._obj === "set") { env.state.documentsXmp[docTarget._id] = command.to.XMPMetadataAsUTF8; return [{}]; }
+            return [{ XMPMetadataAsUTF8: env.state.documentsXmp[docTarget._id] || "" }];
+        }
         if (command._obj === "select") {
             env.doc.activeLayers = [env.doc.layers.find(layer => layer.id === command._target[0]._id)]; return [{}];
         }
         return originalBatch(commands);
+    };
+    let notification;
+    env.photoshop.action.addNotificationListener = async (events, callback) => {
+        env.state.notificationEvents = Array.from(events); notification = callback;
+    };
+    env.photoshop.action.removeNotificationListener = async (events, callback) => {
+        assert.equal(callback, notification); assert.deepEqual(Array.from(events), env.state.notificationEvents); notification = null;
     };
     const file = { name: "gameui-resource-catalog.json", text: catalogText,
         async write(value) { this.text = value; }, async read() { return this.text; } };
@@ -405,7 +439,9 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         }
     });
     await new Promise(resolve => setImmediate(resolve));
-    return { ...env, elements, file, releaseCatalog, entrypoints, async click(id) { await elements[id].listeners.click(); },
+    return { ...env, elements, file, releaseCatalog, entrypoints,
+        async notify(name = "select") { if (notification) await notification(name, {}); },
+        async click(id) { await elements[id].listeners.click(); },
         async metadata() { return clone((await env.store.readMetadata(env.doc.id)).metadata); } };
 }
 
@@ -650,7 +686,7 @@ test("panel distinguishes existing and imported same-name same-version options w
     for (const imported of [false, true]) {
         const env = imported ? await panelHarness(undefined, undefined, { importDirectory: library }) : await panelHarness(JSON.stringify(library));
         if (imported) await env.click("import");
-        const items = env.elements.resources.children;
+        const items = env.elements.resources.children.filter(item => item.value);
         assert.equal(items.length, 3);
         const first = items.find(item => item.value === ref), second = items.find(item => item.value === secondRef);
         assert.notEqual(first.textContent, second.textContent);
@@ -667,4 +703,163 @@ test("panel distinguishes existing and imported same-name same-version options w
         assert.deepEqual(Object.keys(value.assets), [secondRef]);
         assert.equal(Object.keys(JSON.parse(env.file.text).assets).length, 3);
     }
+});
+
+function primarySource64(env) {
+    const raw = pixels(64, 48);
+    env.layer.boundsNoEffects = { left: 32, top: 40, right: 96, bottom: 88 };
+    env.layer.pixelData = raw.slice();
+    env.imageData.width = 64; env.imageData.height = 48; env.imageData.getData = async () => raw;
+    env.elements.displayName.value = "一键公共按钮";
+    env.elements.sampling.value = "Point";
+    for (const [side, value] of Object.entries({ left: 7, top: 5, right: 11, bottom: 9 })) env.elements[side].value = String(value);
+    return raw;
+}
+
+test("primary action initializes and creates from source64 before applying the complete target in one history step", async () => {
+    const env = await panelHarness();
+    const raw = primarySource64(env);
+    env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
+    assert.equal(env.elements.resources.value, "");
+    await env.click("primaryAction");
+    const value = await env.metadata();
+    assert.ok(value && value.nodes[10], env.elements.status.textContent);
+    const marker = value.nodes[10], source = value.authoring.sources[marker.assetRef];
+    assert.equal(source.width, 64); assert.equal(source.height, 48);
+    assert.deepEqual(author.decodeSnapshot(source), raw);
+    assert.equal(value.authoring.targets[marker.nodeId].width, 128); assert.equal(value.authoring.targets[marker.nodeId].height, 80);
+    assert.equal(env.layer.boundsNoEffects.right - env.layer.boundsNoEffects.left, 128);
+    assert.equal(env.state.history.length, 1); assert.equal(env.state.history[0].committed, true);
+    assert.equal(env.elements.resources.value, marker.assetRef);
+    assert.equal(env.elements.newResourceSettings.style.display, "none");
+    assert.match(env.elements.inheritedContract.textContent, /7\/5\/11\/9/);
+    assert.match(env.elements.status.textContent, /Cmd\+S/);
+    await env.click("primaryAction");
+    const reapplied = await env.metadata();
+    assert.equal(reapplied.nodes[10].nodeId, marker.nodeId);
+    assert.equal(reapplied.nodes[10].assetRef, marker.assetRef);
+    assert.equal(env.state.imagingCalls.length, 1, "Bound reapplication must reuse source, not capture the stretched effect.");
+});
+
+test("primary action references an explicitly chosen resource in a second unmarked PSD with independent identities", async () => {
+    const env = await panelHarness(); primarySource64(env);
+    env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
+    await env.click("primaryAction");
+    const first = await env.metadata(), ref = first.nodes[10].assetRef;
+    const second = { ...env.doc, id: 2, name: "Second.psd" };
+    const layer = { ...env.layer, parent: second, boundsNoEffects: { left: 50, top: 60, right: 114, bottom: 108 } };
+    second.layers = [layer]; second.activeLayers = [layer];
+    env.photoshop.app.documents.push(second); env.photoshop.app.activeDocument = second;
+    await env.notify("open");
+    assert.equal(env.elements.resources.value, ref, "An already explicit resource choice may carry to the next unbound instance.");
+    assert.equal(env.elements.targetWidth.value, "64"); assert.equal(env.elements.targetHeight.value, "48");
+    assert.match(env.elements.targetHint.textContent, /非空边界/);
+    env.elements.targetWidth.value = "192"; env.elements.targetHeight.value = "96";
+    env.elements.left.value = "0"; env.elements.sampling.value = "Bilinear";
+    await env.click("primaryAction");
+    const value = (await env.store.readMetadata(2)).metadata;
+    assert.ok(value, env.elements.status.textContent);
+    assert.equal(value.nodes[10].assetRef, ref);
+    assert.notEqual(value.nodes[10].nodeId, first.nodes[10].nodeId);
+    assert.notEqual(value.documentId, first.documentId); assert.notEqual(value.artboardId, first.artboardId);
+    assert.equal(value.assets[ref].nineSlice.left, 7); assert.equal(value.assets[ref].sampling.filterMode, "Point");
+    assert.equal(value.authoring.targets[value.nodes[10].nodeId].width, 192);
+    assert.equal(value.authoring.targets[value.nodes[10].nodeId].height, 96);
+    assert.deepEqual(author.decodeSnapshot(value.authoring.sources[ref]), author.decodeSnapshot(first.authoring.sources[ref]));
+    assert.equal(env.state.imagingCalls.length, 1);
+    assert.equal(env.state.history.length, 2); assert.ok(env.state.history.every(item => item.committed));
+});
+
+test("primary action failure rolls back pixels and XMP in one history step and preserves a legal unused catalog snapshot", async () => {
+    const env = await panelHarness(), raw = primarySource64(env);
+    const bounds = { ...env.layer.boundsNoEffects };
+    env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
+    env.state.failXmpWrite = true;
+    await env.click("primaryAction");
+    assert.match(env.elements.status.textContent, /injected XMP write failure/);
+    assert.match(env.elements.status.textContent, /显式引用恢复/);
+    assert.equal(await env.metadata(), null);
+    assert.deepEqual(env.layer.boundsNoEffects, bounds); assert.deepEqual(env.layer.pixelData, raw);
+    assert.equal(env.state.history.length, 1); assert.equal(env.state.history[0].committed, false);
+    const catalog = JSON.parse(env.file.text);
+    assert.equal(Object.keys(catalog.assets).length, 1); assert.equal(Object.keys(catalog.nodes).length, 0);
+    assert.equal(catalog.authoring.targets, undefined); assert.doesNotThrow(() => author.validateMetadata(catalog));
+});
+
+test("primary action rejects same-name creation and unsafe existing metadata without overwriting or guessing a first resource", async () => {
+    const { metadata } = fixture();
+    const env = await panelHarness(JSON.stringify(author.directory(metadata)));
+    assert.equal(env.elements.resources.value, "");
+    env.elements.displayName.value = "  " + options.displayName + "  ";
+    const before = env.file.text;
+    await env.click("primaryAction");
+    assert.match(env.elements.status.textContent, /已有同名公共资源/);
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, before); assert.equal(env.state.imagingCalls.length, 0);
+    for (const unsafe of ["bad-json", null, { ...metadata, schemaVersion: 2 }, { ...metadata, requiredCapabilities: ["future.required"] }]) {
+        env.state.stored = JSON.stringify({ metadata: typeof unsafe === "string" ? unsafe : JSON.stringify(unsafe) });
+        const stored = env.state.stored;
+        await env.click("primaryAction");
+        assert.equal(env.state.stored, stored); assert.equal(env.file.text, before);
+        assert.equal(env.state.imagingCalls.length, 0);
+    }
+    env.state.stored = null;
+    const another = { ...env.doc, id: 2, name: "Copied.psd", layers: [], activeLayers: [] };
+    env.photoshop.app.documents.push(another);
+    env.state.stored = JSON.stringify({ metadata: JSON.stringify(metadata) });
+    env.state.documentsXmp[2] = env.state.stored;
+    await env.click("primaryAction");
+    assert.match(env.elements.status.textContent, /身份冲突/);
+    assert.equal(env.file.text, before); assert.equal(env.state.imagingCalls.length, 0);
+});
+
+test("selection notifications refresh only document or layer identity and preserve same-selection form edits", async () => {
+    const env = await panelHarness();
+    assert.deepEqual(env.state.notificationEvents, ["select", "open", "close"]);
+    env.elements.displayName.value = "正在输入的名字";
+    env.elements.left.value = "3"; env.elements.targetWidth.value = "123";
+    await env.notify("select"); await env.notify("open");
+    assert.equal(env.elements.displayName.value, "正在输入的名字");
+    assert.equal(env.elements.left.value, "3"); assert.equal(env.elements.targetWidth.value, "123");
+    const layer = { ...env.layer, id: 20, name: "new-layer", boundsNoEffects: { left: 1, top: 2, right: 25, bottom: 18 } };
+    env.doc.layers.push(layer); env.doc.activeLayers = [layer];
+    await env.notify("select");
+    assert.match(env.elements.selection.textContent, /new-layer/);
+    assert.equal(env.elements.targetWidth.value, "24"); assert.equal(env.elements.targetHeight.value, "16");
+    assert.equal(env.elements.resources.value, "");
+    await env.click("toggleAdvanced");
+    assert.equal(env.elements.advancedPanel.style.display, "block");
+    await env.click("toggleAdvanced"); assert.equal(env.elements.advancedPanel.style.display, "none");
+    await env.entrypoints.value.plugin.destroy();
+    env.doc.activeLayers = [env.layer]; await env.notify("select");
+    assert.match(env.elements.selection.textContent, /new-layer/, "Destroy must remove the notification callback.");
+    const invalid = fixture().metadata; invalid.schemaVersion = 2;
+    const initiallyInvalid = await panelHarness(undefined, invalid);
+    assert.deepEqual(initiallyInvalid.state.notificationEvents, ["select", "open", "close"]);
+    initiallyInvalid.photoshop.app.activeDocument = null; initiallyInvalid.photoshop.app.documents = [];
+    await initiallyInvalid.notify("close");
+    assert.equal(initiallyInvalid.elements.selection.textContent, "请打开 PSD");
+});
+
+test("selection notifications skip while the primary action is busy and bound layers restore their own resource and target", async () => {
+    const env = await panelHarness(); primarySource64(env);
+    env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const original = env.photoshop.imaging.getPixels;
+    env.photoshop.imaging.getPixels = async value => { await gate; return original(value); };
+    const action = env.click("primaryAction");
+    await new Promise(resolve => setImmediate(resolve));
+    const other = { ...env.layer, id: 20, name: "other", boundsNoEffects: { left: 0, top: 0, right: 20, bottom: 20 } };
+    env.doc.layers.push(other); env.doc.activeLayers = [other];
+    await env.notify("select");
+    assert.doesNotMatch(env.elements.selection.textContent, /other/);
+    assert.equal(env.elements.targetWidth.value, "128");
+    release(); await action;
+    const value = await env.metadata(), ref = value.nodes[10].assetRef;
+    assert.match(env.elements.selection.textContent, /other/);
+    assert.equal(env.elements.resources.value, ref);
+    env.elements.resources.value = ""; env.elements.resources.listeners.change();
+    env.doc.activeLayers = [env.layer]; await env.notify("select");
+    assert.equal(env.elements.resources.value, ref); assert.equal(env.elements.targetWidth.value, "128");
+    assert.equal(env.elements.targetHeight.value, "80");
 });

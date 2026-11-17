@@ -10,6 +10,15 @@ let catalogFile;
 let busy = false;
 let catalogLoading = true;
 let catalogFailure = null;
+let explicitResourceRef = null;
+let selectionIdentity = null;
+let lastBoundRef = null;
+let renderedRef = null;
+let advancedOpen = false;
+let listenerRegistered = false;
+let notificationFailure = null;
+let destroyed = false;
+const selectionEvents = ["select", "open", "close"];
 
 function displayText(value) {
     return String(value).replace(/[A-Za-z0-9._@:/-]{24,}/g, token => token.match(/.{1,20}/g).join("\n"));
@@ -27,18 +36,35 @@ function resource() {
 }
 function assetFields() {
     const asset = catalog.assets[$("resources").value];
-    if (!asset) return;
+    if (!asset) {
+        $("identityInfo").textContent = "新建公共资源；内部引用与版本由工具自动维护。";
+        $("resourceInfo").textContent = "";
+        updateMode(); return;
+    }
     $("displayName").value = asset.displayName || asset.assetKey || "";
     $("identityInfo").textContent = displayText("诊断引用（工具维护）：\n" + $("resources").value);
     for (const side of ["left", "top", "right", "bottom"]) $(side).value = String(asset.nineSlice[side]);
     $("sampling").value = asset.sampling ? asset.sampling.filterMode : "Bilinear";
     $("sampling").setAttribute("value", $("sampling").value);
     $("resourceInfo").textContent = displayText($("resources").value) + "\n" + asset.sourceSize.width + "×" + asset.sourceSize.height + " 源像素";
+    updateMode();
 }
-function renderResources(preferred) {
+function updateMode() {
+    const asset = catalog.assets[$("resources").value];
+    $("newResourceSettings").style.display = asset && !advancedOpen ? "none" : "block";
+    $("inheritedContract").style.display = asset ? "block" : "none";
+    $("inheritedContract").textContent = asset ? "自动继承：源 " + asset.sourceSize.width + "×" + asset.sourceSize.height +
+        "，L/T/R/B " + [asset.nineSlice.left, asset.nineSlice.top, asset.nineSlice.right, asset.nineSlice.bottom].join("/") +
+        "，" + (asset.sampling ? asset.sampling.filterMode : "Bilinear") : "";
+    $("primaryAction").textContent = asset ? "引用资源并应用到选层" : "创建资源并应用到选层";
+}
+function renderResources(preferred, syncFields = true) {
     const select = $("resources");
-    const prior = preferred || select.value;
+    const prior = preferred === undefined ? explicitResourceRef || "" : preferred;
     select.textContent = "";
+    const createOption = document.createElement("option");
+    createOption.value = ""; createOption.textContent = "新建公共资源";
+    select.appendChild(createOption);
     const entries = Object.keys(catalog.assets).sort().map(ref => ({ ref,
         label: (typeof catalog.assets[ref].displayName === "string" && catalog.assets[ref].displayName.trim() || "未命名资源") + " · v" + catalog.assets[ref].version }));
     const counts = new Map();
@@ -49,8 +75,11 @@ function renderResources(preferred) {
         option.textContent = entry.label + (counts.get(entry.label) > 1 ? " · 条目 " + (index + 1) : "");
         select.appendChild(option);
     }
-    if (catalog.assets[prior]) { select.value = prior; select.setAttribute("value", prior); }
-    assetFields();
+    const selected = catalog.assets[prior] ? prior : "";
+    select.value = selected; select.setAttribute("value", selected);
+    if (syncFields || renderedRef !== selected) assetFields();
+    else updateMode();
+    renderedRef = selected;
 }
 async function persistCatalog(next) {
     author.validateMetadata(next);
@@ -133,35 +162,60 @@ function renderIssues(issues) {
         $("issues").appendChild(row);
     }
 }
+function currentSelectionKey() {
+    const doc = ps.app.activeDocument;
+    return doc ? doc.id + ":" + Array.from(doc.activeLayers).map(layer => layer.id).sort().join(",") : "none";
+}
+function targetDefaults(value, selected) {
+    if (!selected) return;
+    const marker = value && value.nodes[selected.id];
+    const target = marker && value.authoring && value.authoring.targets && value.authoring.targets[marker.nodeId];
+    const b = selected.boundsNoEffects;
+    const width = target ? target.width : b.right - b.left, height = target ? target.height : b.bottom - b.top;
+    if (Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0) {
+        $("targetWidth").value = String(width); $("targetHeight").value = String(height);
+    }
+    $("targetHint").textContent = target ? "默认使用该实例已登记的完整目标画布；可直接修改宽高。" :
+        "默认取当前选层整数非空边界；透明外沿不推测，需要时填写完整目标画布尺寸。";
+}
 async function refresh() {
     if (catalogLoading) { status("目录正在加载，请稍候。"); return; }
     if (catalogFailure) throw new Error("本地目录不可读，已阻止覆盖：" + catalogFailure + "。请显式导入备份目录恢复。");
+    const key = currentSelectionKey(), changed = key !== selectionIdentity;
+    selectionIdentity = key;
     const doc = ps.app.activeDocument;
-    if (!doc) { $("selection").textContent = "请打开 PSD"; renderResources(); renderIssues([]); status("请先打开 PSD，再点击刷新 / 检查。"); return; }
+    if (!doc) { $("selection").textContent = "请打开 PSD"; renderResources(undefined, false); renderIssues([]); status("请先打开 PSD；图层切换后会自动刷新。"); return; }
     const selected = doc.activeLayers.length === 1 ? doc.activeLayers[0] : null;
     $("selection").textContent = displayText(doc.name + "\n" + (selected ? selected.name + " [" + selected.id + "]" : "请选择一个像素层"));
     const value = (await store.readMetadata(doc.id)).metadata;
-    if (!value) { renderResources(); renderIssues([]); status("当前 PSD 未初始化。"); return; }
-    author.validateMetadata(value);
-    await collision(doc, value);
-    // Legacy PSDs remain readable; missing snapshots are reported rather than fabricated.
-    const portable = JSON.parse(JSON.stringify(value)); portable.nodes = {};
-    if (portable.authoring) delete portable.authoring.targets;
-    for (const ref of Object.keys(portable.assets)) {
-        if (!portable.authoring || !portable.authoring.sources[ref]) delete portable.assets[ref];
+    if (value) {
+        author.validateMetadata(value);
+        await collision(doc, value);
+        const portable = JSON.parse(JSON.stringify(value)); portable.nodes = {};
+        if (portable.authoring) delete portable.authoring.targets;
+        for (const ref of Object.keys(portable.assets)) {
+            if (!portable.authoring || !portable.authoring.sources[ref]) delete portable.assets[ref];
+        }
+        catalog = author.importDirectory(catalog, portable);
     }
-    catalog = author.importDirectory(catalog, portable);
-    renderResources(selected && value.nodes[selected.id] && value.nodes[selected.id].assetRef);
+    const marker = selected && value && value.nodes[selected.id];
+    const boundRef = marker ? marker.assetRef : null;
+    if (boundRef && (changed || lastBoundRef !== boundRef)) explicitResourceRef = boundRef;
+    lastBoundRef = boundRef;
+    renderResources(explicitResourceRef || "", changed);
+    if (changed) targetDefaults(value, selected);
+    if (!value) { renderIssues([]); status("当前 PSD 未初始化；主按钮会自动初始化并创建 / 引用资源。完成后 Cmd+S 保存。"); return; }
     const leaves = store.flattenLayers(doc.layers).filter(layer => !layer.layers || !layer.layers.length);
     const issues = author.inspect(value, leaves);
     renderIssues(issues);
-    status(issues.length ? issues.length + " 项待处理；未绑定层不会猜绑。" : "身份和资源契约检查通过。请随 PSD 保存。");
+    status(issues.length ? issues.length + " 项待处理；未绑定层不会猜绑。可使用主按钮处理选层，其余检查见高级操作。" : "身份和资源契约检查通过。请随 PSD 保存。");
 }
+
 async function run(action) {
     if (busy) return;
     busy = true;
     for (const button of document.querySelectorAll("button")) button.disabled = true;
-    try { await action(); await refresh(); }
+    try { const result = await action(); await refresh(); if (typeof result === "string") status(result); }
     catch (error) { status(String(error.message || error)); }
     finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; }
 }
@@ -169,9 +223,70 @@ function bind(id, action) {
     $(id).addEventListener("click", () => run(async () => {
         if (catalogLoading) throw new Error("目录正在加载，请稍候再操作。");
         if (catalogFailure && !["refresh", "import"].includes(id)) throw new Error("本地目录不可读，已阻止覆盖。请显式导入备份目录恢复。");
-        await action();
+        return action();
     }));
 }
+async function primaryAction() {
+    const previousCatalog = catalog;
+    let ref;
+    try {
+        ref = await modal("创建 / 引用并应用 GameUI 资源", async doc => {
+            const { layer } = store.selectedLayer();
+            const packet = await store.readMetadata(doc.id), existing = packet.metadata;
+            if (existing === null && packet.xmp.getProperty(store.namespace, "metadata") != null) {
+                throw new Error("当前 PSD 已有无效 GameUI 标记，不能自动初始化；请先修复元数据。");
+            }
+            let next = existing === null ? author.createMetadata() : author.validateMetadata(existing);
+            await collision(doc, next);
+            const bounds = await store.assertSupportedLayer(doc, layer);
+            const chosen = $("resources").value;
+            if (chosen) {
+                next = author.importResource(next, catalog, resource());
+                const marker = next.nodes[layer.id];
+                const prior = marker && next.authoring.targets && next.authoring.targets[marker.nodeId];
+                const width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
+                next = author.reference(next, layer.id, chosen, false, prior || {
+                    width, height, insetLeft: 0, insetTop: 0, contentWidth: width, contentHeight: height
+                });
+            } else {
+                const settings = options();
+                if (Object.values(catalog.assets).some(asset => typeof asset.displayName === "string" &&
+                    asset.displayName.trim() === settings.displayName.trim())) {
+                    throw new Error("已有同名公共资源，请从选择器引用；独立资源请用不同名称");
+                }
+                const source = await store.captureLayerSource(doc, layer, {
+                    left: Number($("padLeft").value), top: Number($("padTop").value),
+                    right: Number($("padRight").value), bottom: Number($("padBottom").value)
+                });
+                next = author.define(next, layer.id, author.resourceOptions(catalog, null, "create", settings), source);
+                store.assertTargetLayer(layer, next.authoring.targets[next.nodes[layer.id].nodeId]);
+            }
+            const marker = next.nodes[layer.id];
+            const target = await store.applyLayerPreview(doc, layer, next.authoring.sources[marker.assetRef], next.assets[marker.assetRef],
+                Number($("targetWidth").value), Number($("targetHeight").value), next.authoring.targets && next.authoring.targets[marker.nodeId]);
+            await update(doc, author.withTarget(next, layer.id, target));
+            return marker.assetRef;
+        });
+    } catch (error) {
+        if (catalog !== previousCatalog) {
+            renderResources(undefined, false);
+            const failure = new Error(error.message + "。目录已保留合法源快照，可显式引用恢复；PSD 操作已回滚。");
+            Object.defineProperty(failure, "cause", { value: error });
+            if (error.code) failure.code = error.code;
+            throw failure;
+        }
+        throw error;
+    }
+    explicitResourceRef = ref;
+    return "已创建 / 引用并应用到选层；原始源快照保留。请使用 Cmd+S 保存 PSD。";
+}
+bind("primaryAction", primaryAction);
+$("toggleAdvanced").addEventListener("click", () => {
+    advancedOpen = !advancedOpen;
+    $("advancedPanel").style.display = advancedOpen ? "block" : "none";
+    $("toggleAdvanced").textContent = advancedOpen ? "隐藏高级操作" : "显示高级操作";
+    updateMode();
+});
 bind("refresh", refresh);
 bind("initialize", () => modal("初始化 GameUI 试用 PSD", async doc => {
     if ((await store.readMetadata(doc.id)).metadata) throw new Error("已存在 GameUI 元数据；请检查、修复或分配全新文档身份。");
@@ -278,8 +393,27 @@ bind("export", async () => {
     const text = JSON.stringify(output, null, 2); await file.write(text);
     if (await file.read() !== text) throw new Error("导出目录回读不一致。");
 });
-$("resources").addEventListener("change", assetFields);
-uxp.entrypoints.setup({ panels: { gameuiAuthoring: { show() { if (!busy) run(refresh); } } } });
+$("resources").addEventListener("change", () => {
+    explicitResourceRef = $("resources").value || "";
+    if (!explicitResourceRef) $("displayName").value = "";
+    assetFields(); renderedRef = explicitResourceRef;
+});
+async function onSelectionEvent() {
+    if (destroyed || busy || catalogLoading) return;
+    try {
+        if (currentSelectionKey() !== selectionIdentity) await run(refresh);
+    } catch (error) { status("自动选择刷新失败，请使用高级刷新 / 检查：" + error.message); }
+}
+async function registerSelectionEvents() {
+    try {
+        await ps.action.addNotificationListener(selectionEvents, onSelectionEvent);
+        listenerRegistered = true;
+    } catch (error) { notificationFailure = error.message; }
+}
+uxp.entrypoints.setup({ plugin: { async destroy() {
+    destroyed = true;
+    if (listenerRegistered) await ps.action.removeNotificationListener(selectionEvents, onSelectionEvent);
+} }, panels: { gameuiAuthoring: { show() { if (!busy) run(refresh); } } } });
 (async () => {
     try {
         const folder = await fs.getDataFolder();
@@ -290,7 +424,9 @@ uxp.entrypoints.setup({ panels: { gameuiAuthoring: { show() { if (!busy) run(ref
         }
         catalogFailure = null;
         catalogLoading = false;
+        await registerSelectionEvents();
         await refresh();
+        if (notificationFailure) status("自动选择刷新不可用，请使用高级操作中的刷新 / 检查：" + notificationFailure);
     } catch (error) {
         if (catalogLoading || catalogFailure) { catalogLoading = false; catalogFailure = error.message; status("目录检查失败，已阻止覆盖：" + error.message); }
         else status("PSD 检查失败：" + error.message);

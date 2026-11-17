@@ -8,15 +8,23 @@ node Panel/build-panel.cjs /absolute/new-or-empty/staging/GameUIAuthoring
 
 输出为自包含插件目录，包含 `manifest.json`、面板 HTML/CSS/JS、原样复制的 `gameui-core.js`、`gameui-ps.js`、`gameui-authoring.js`。由交付安装脚本负责归档/安装；构建器拒绝覆盖非空目录。开发加载入口为输出目录的 `manifest.json`，Photoshop >=25.0，UXP API 2。本面板不改官方蓝湖插件。Node 构建和测试不启动 PS/Unity。
 
-## 操作
+## 日常操作
 
-1. 打开隔离 PSD，初始化当前 PSD。写入本地 uploadScope 测试标记，限制仅 `cfea1199-7c07-48d9-86ef-cdbd3385c237`；上传由单独适配器完成。
-2. 选中普通像素层，只填写名字、源像素 L/T/R/B、Point/Bilinear，点击“从选层新建资源”。内部assetKey由工具生成、初始version=1，只读诊断引用显示于面板；美术无需填写ID或版本。“更新所选资源名称”只更改名字并保持原快照；像素/边框/采样变更使用“发布所选资源新版本”，工具按同资源已有最高版本+1采集当前选层新源，保留旧版本。透明外沿需通过“源画布透明留白 L/T/R/B”显式补齐；默认0按图层非空 bounds 裁切，不能自动推断原图画布。自动保存原始源快照到 XMP `authoring.sources[assetRef]` 和插件私有资源目录。工具校验派生的资源键/版本与assetRef一致；实际复用身份始终为assetRef。
-3. 在任何 PSD 初始化后，选择目录中的版本、选中普通像素层，显式引用。引用只把所选assetRef契约和PNG加入PSD，不写入整个目录；该操作明确以当前非空图层bounds声明目标画布，不推测透明外沿，后续重新应用目标尺寸可生成含留白的画布。只有源尺寸/边框/采样属于公共资源，实例写入新的或原有 nodeId 和引用；无需在画布摆源图。
-4. 目标尺寸预览在面板显示 PNG；“应用目标尺寸到选层”从已存源快照生成新像素并替换同一图层，保留 nodeId/assetRef 和最初快照，因此原始小源图无需继续保留在画面。本地`authoring.targets[nodeId]`记录width/height/insetLeft/insetTop/contentWidth/contentHeight，来自目标RGBA中alpha非零的包围框；应用后严格核对真实PS内容边界，避免原生导出裁掉透明外沿后把128×80画布误作124×76。Point 使用既有 renderNineSlice；Bilinear 使用相同切片坐标和逐通道线性插值作为检查预览，不能替代 Unity 纹理/图集实测。
-5. “复制选层”直接使用 PS 返回的新 layer ID，生成新nodeId、继承assetRef和目标画布记录。“当前文档分配全新身份”明确重置当前副本的 documentId/artboardId/各nodeId并重键目标记录；资源身份保持。此操作面向已通过 Photoshop 复制/另存出的文档，不会另建或保存文件。
-6. 点击刷新/检查，定位未绑定层、源缺失、失效绑定。任意原生复制一律不猜测来源，用选择器明确绑定；重复 nodeId 可对选层显式重新生成。关闭、保存重开、重命名、移动均使用 XMP 中按 Photoshop layer ID 持久的身份，不按名称或像素重算。两个同时打开且同身份的 PSD 阻止写入，需对副本分配新身份。关闭原稿后再打开未分配身份的原生副本无法自动判断其来源，必须执行明确的新身份操作。
-7. 导出目录 JSON 交给另一台机器或其他 PSD 使用，导入后仅合并到插件私有目录，显式引用时再加入PSD。便携目录不携带实例targets。插件私有 JSON 每次写入后立即回读；文件选择器导出亦回读。目录与 PSD 的 XMP 修改均需在实际 PS 中验收；PSD 使用正常保存操作持久化到磁盘。
+1. 打开 PSD 并选一个普通像素层。选择器空值明确表示“新建公共资源”，不会自动选择库中的第一条。首次新建只填名称、源像素 L/T/R/B、Point/Bilinear 和需要的源透明留白；内部ID与版本仍自动维护。同名新建会阻止并提示引用现有资源，独立资源需不同名称。
+2. 填目标画布宽高，点击唯一主按钮。新建时先从当前原尺寸采源快照，再创建引用并应用目标像素；引用时明确选择已有资源，由资源继承九宫/采样，不从效果图推断源。未标记 PSD 在同一次操作中自动初始化，无需另点初始化。
+3. 使用正常 Cmd+S 保存 PSD。面板不执行隐式磁盘保存。下一未绑定图层或 PSD 可继续使用刚明确选择 / 创建的资源，一次主操作完成引用与应用；绑定层切回来会显示自己的持久 assetRef。
+
+目标尺寸默认取当前绑定实例已登记的完整画布，或当前选层整数非空边界；后者不代表原始透明画布，需保留外沿时填写完整尺寸。source透明留白仍须明确填写，默认0不会猜原图画布。创建后原始1×快照始终保留在`authoring.sources`，目标几何保存在`authoring.targets`，不需要另摆源样本层。
+
+选择器显示名字与版本；既有同名同版本条目附当前列表内区分序号，`option.value`始终为完整assetRef。序号不参与身份、不会合并用户资源。默认界面只显示当前资源的继承契约；内部全引用在高级诊断中查看。
+
+## 高级与自动刷新
+
+“显示高级操作”展开既有分步操作，保留原控件ID与行为：单独初始化、仅创建、更新名字、发布新版本、仅引用、复制/fork/身份修复、可选预览、仅应用、目录导入导出及检查定位。发布新版本仍按私有目录同资源最高版本+1；名称更新不重采样源。引用只把所选版本加入PSD，导入目录只更新私有库。
+
+使用Adobe Photoshop API2 `action.addNotificationListener(["select","open","close"], callback)`，只在文档/图层身份改变时刷新；忙碌或加载中跳过，同一选层内的输入不会被通知重置。销毁插件时移除同一监听；API注册失败会提示使用高级刷新，不轮询。实际宿主事件时序仍由负责人验收。[官方API](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/media/photoshopaction)、[事件名](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/media/eventcodes)。
+
+主按钮将自动初始化、创建/引用、像素应用及XMP写入置于一次modal history；失败请求回滚PSD像素与XMP。未知schema/必需能力、损坏XMP或身份冲突仍严格阻止，不覆盖已有标记。目录沿用先存源后写XMP：后续XMP失败最多留下合法未使用条目，面板保留原错误并提示可显式引用恢复，不回写或删除可能被外部更新的目录。
 
 ## 支持边界
 

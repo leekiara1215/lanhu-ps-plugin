@@ -19,3 +19,8 @@ button:disabled { opacity: .45; }
 .issue { width: 100%; padding: 6px; margin-top: 6px; box-sizing: border-box; border: 1px solid #a86b32; white-space: pre-wrap; }
 pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #ffdda1; }
 .panel-end { border-top: 1px solid #555; padding: 10px 0 6px; margin-top: 12px; }
+#newResourceSettings, #advancedPanel { width: 100%; }
+#inheritedContract, #targetHint { white-space: pre-wrap; line-height: 1.5; }
+#inheritedContract { padding: 8px; background: #313e49; color: #cbe6fb; }
+.primary-action { background: #245f8e; border-color: #71abd6; font-weight: bold; }
+#toggleAdvanced { background: #323232; }
