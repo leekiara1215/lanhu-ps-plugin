@@ -15,7 +15,7 @@ Framework 只保留经过审查的集成快照；后续从本仓库显式同步�
 - [冻结契约](Docs/CONTRACT.md)、[开发与集成同步](Docs/MAINTENANCE.md)、[迁移核对](Docs/MIGRATION.md)。
 - [合成测试材料](Fixtures/README.md)、[原型历史记录](Docs/HISTORY.md)。
 
-日常操作为：选像素层 → 新建时配置一次资源，或明确选择已有版本 → 填目标宽高 → 一个主按钮完成初始化与应用 → 正常 Cmd+S。预览及维修操作在高级入口，详见 [面板说明](Panel/README.md)。0.5.0 真实主流程验收状态见 [集成记录](Docs/SYNC-20261117-PRIMARY.md)。
+日常操作为：选像素层 → 新建时配置一次资源，或明确选择已有版本 → 填目标宽高 → 一个主按钮完成初始化与应用 → 正常 Cmd+S。预览及维修操作在高级入口，详见 [面板说明](Panel/README.md)。0.5.1 真实主流程验收状态见 [集成记录](Docs/SYNC-20261117-PRIMARY.md)。
 
 ## 构建与加载
 

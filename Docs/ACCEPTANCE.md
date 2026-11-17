@@ -2,15 +2,17 @@
 
 日期：2026-11-17。独立仓已建立为开发源；当前 Framework 集成来源为 `e75e5263a309f91da13e80f6ca4795cefba942a8`。
 状态：已有实际 PS 面板、落盘重开和适配器生命周期证据，**新面板两稿的云端到 Unity 闭环与正式推广仍未通过**。
-本页区分历史迁移与后续主流程集成；0.5.0 只取得新版加载证据，未重跑 Unity。
+本页区分历史迁移与后续主流程集成；0.5.0虽Loaded但初始化失败，0.5.1修复后已真实显示目录；未重跑Unity。
 
 主证据目录为 [/Users/betta/.codex/visualizations/2026/11/17/01a1e7c5-ba46-7533-bcc1-580af0395c6a/lanhu-production](/Users/betta/.codex/visualizations/2026/11/17/01a1e7c5-ba46-7533-bcc1-580af0395c6a/lanhu-production)。
 集成总账与历史范围见 [Framework RESULTS.md](/Users/betta/Worktrees/meatloaf_client-feat-lanhu_ui_skill-422718cc/client/Assets/BettaFramework/Scripts/Editor/UI/LanhuDesign/Docs~/Productionization/RESULTS.md)。
 本页下面的资源保存/重开证据是比早期“仅初始化、资源为空”记录更晚的观察，不能把不同阶段的状态混为一个结论。
 
-## 0.5.0 主流程接续
+## 0.5.1 主流程接续
 
 主按钮实现已集成插件 `4034d1f` 与 Framework `b8ddb3e`；定点 10/10 通过，新候选在 UDT 实际 Loaded / Plugin Load Successful。默认自动初始化、明确新建/引用并应用，常用操作一次按钮后正常 Cmd+S；原维修等入口在高级操作。真实主按钮与跨稿同 ref 尚待点按和落盘核验，历史两个 ref 不自动合并。完整来源、包哈希与测试见 [集成记录](SYNC-20261117-PRIMARY.md)。当前上传适配器仍为已观察的增强 0.4.4，最终恢复未执行。
+
+0.5.0声明plugin.destroy时缺必需create，真实控制台在panel.js:413拒绝，目录初始化未执行。A13a091b→插件e0d1746→Framework e8f7808已最小修复，生命周期定点4/4通过；0.5.1实际Load成功后只读Elements确认Second layer3、Point继承和条目2完整ref均呈现。用户点击/同ref保存仍待，详见[同步记录](SYNC-20261117-PRIMARY.md)。
 
 ## 已观察的面板与保存行为
 
@@ -64,3 +66,5 @@
 - 正式 CCX 分发与最终恢复原版状态。未过上述门槛前不称生产推广完成，也不执行生产迁移。
 
 迁移的定点测试、文件哈希与文档差异见 [MIGRATION.md](MIGRATION.md)；冻结 [CONTRACT.md](CONTRACT.md) 保持原样。
+
+当前0.5.1仍有未解可见列表问题：用户明确确认“展开后也只有条目1”；只读真实Elements内却有新建空值、条目1与条目2完整ref。CUA截图仍不包含UXP浮层，停止重复捕获；不能把DOM存在选项宣称为可见列表/跨稿引用通过。待用户提供展开列表的可见截图或其它可定位的新证据后继续，期间不应用、不改目录/PSD、不按名称猜绑。
