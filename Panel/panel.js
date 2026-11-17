@@ -27,8 +27,6 @@ const fieldEdits = new Map();
 const selectionEvents = ["select", "open", "close"];
 let lanhuBusy = false;
 let lanhuHost;
-let activeTab = "authoring";
-let inlineLanhuOpen = false;
 
 // A div avoids the host-painted HTMLButtonElement chrome. Keep the existing
 // disabled property contract, ARIA state and keyboard behavior together.
@@ -179,6 +177,182 @@ for (const id of ["lanhuTeam", "lanhuProject", "lanhuGroup", "lanhuScale"]) make
 
 const hostWindow = typeof window === "undefined" ? null : window;
 let clippingFrame = null;
+// UXP paints native scrollbars in the Photoshop theme. Draw this rail ourselves
+// and move the content explicitly: UXP does not reliably apply scrollTop to
+// overflow:hidden containers. The content and thumb share one offset.
+const scrollViewport = $("panelViewport");
+const scrollContent = $("panelContent");
+const scrollRail = $("panelScrollbar");
+const scrollThumb = $("panelScrollThumb");
+let scrollDrag = null;
+let contentScrollTop = 0;
+let lastStandardWheelAt = 0;
+function scrollMetrics() {
+    const height = scrollViewport.clientHeight || 0;
+    const contentHeight = Math.max(scrollContent.scrollHeight || 0, scrollContent.offsetHeight || 0);
+    const maximum = Math.max(0, contentHeight - height);
+    const track = Math.max(0, (scrollRail.clientHeight || height) - 8);
+    const thumb = maximum ? Math.min(track, Math.max(28, track * height / (height + maximum))) : track;
+    return { height, maximum, track, thumb, travel: track - thumb };
+}
+function updateScrollbar() {
+    const metrics = scrollMetrics();
+    const top = contentScrollTop = Math.max(0, Math.min(metrics.maximum, contentScrollTop));
+    if (scrollViewport.scrollTop) scrollViewport.scrollTop = 0;
+    scrollContent.style.top = -top + "px";
+    scrollRail.style.visibility = metrics.maximum > 0 ? "visible" : "hidden";
+    scrollRail.setAttribute("aria-disabled", metrics.maximum > 0 ? "false" : "true");
+    scrollRail.setAttribute("tabindex", metrics.maximum > 0 ? "0" : "-1");
+    scrollRail.setAttribute("aria-valuemax", String(Math.round(metrics.maximum)));
+    scrollRail.setAttribute("aria-valuenow", String(Math.round(top)));
+    scrollThumb.style.height = metrics.thumb + "px";
+    scrollThumb.style.marginTop = (metrics.maximum ? top / metrics.maximum * metrics.travel : 0) + "px";
+}
+function scrollPanelTo(top) {
+    contentScrollTop = Math.max(0, Math.min(scrollMetrics().maximum, top));
+    scheduleInputClipping();
+}
+function onPanelWheel(event) {
+    if (event.ctrlKey || event.metaKey) return;
+    // Photoshop hosts can expose either wheel API. Ignore the legacy duplicate
+    // when both are emitted for the same gesture.
+    if (event.type === "mousewheel" && Date.now() - lastStandardWheelAt < 32) return;
+    let delta = Number.isFinite(event.deltaY) ? event.deltaY : -(event.wheelDeltaY || event.wheelDelta || 0);
+    if (!Number.isFinite(delta) || delta === 0) return;
+    if (event.type === "wheel") lastStandardWheelAt = Date.now();
+    // Let a list consume its own wheel movement before scrolling the whole panel.
+    for (let node = event.target; node && node !== scrollViewport; node = node.parentNode) {
+        const classes = String(node.className || "").split(/\s+/);
+        if (node.id !== "resources" && node.id !== "lanhuBoardList" && !classes.includes("ui-select-list")) continue;
+        const top = node.scrollTop || 0, maximum = (node.scrollHeight || 0) - (node.clientHeight || 0);
+        if (maximum > 0 && (delta < 0 ? top > 0 : top < maximum)) return;
+    }
+    const metrics = scrollMetrics();
+    if (!metrics.maximum) return;
+    event.preventDefault();
+    const unit = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? metrics.height : 1;
+    scrollPanelTo(contentScrollTop + delta * unit);
+}
+function onScrollKey(event) {
+    const target = event.target;
+    if (target && /^(INPUT|TEXTAREA)$/i.test(target.tagName || target.tag || "")) return;
+    if (target && target.getAttribute && ["combobox", "listbox", "option"].includes(target.getAttribute("role"))) return;
+    const metrics = scrollMetrics(), top = contentScrollTop;
+    const destinations = { PageUp: top - metrics.height * .9, PageDown: top + metrics.height * .9, Home: 0, End: metrics.maximum };
+    if (target === scrollRail) Object.assign(destinations, { ArrowUp: top - 32, ArrowDown: top + 32 });
+    if (!Object.prototype.hasOwnProperty.call(destinations, event.key)) return;
+    event.preventDefault(); scrollPanelTo(destinations[event.key]);
+}
+function onScrollDrag(event) {
+    if (!scrollDrag || !Number.isFinite(event.clientY)) return;
+    const metrics = scrollMetrics();
+    if (metrics.travel > 0) scrollPanelTo(scrollDrag.top + (event.clientY - scrollDrag.y) / metrics.travel * metrics.maximum);
+    event.preventDefault();
+}
+function endScrollDrag() {
+    scrollDrag = null; scrollRail.setAttribute("data-dragging", "false");
+    document.removeEventListener("mousemove", onScrollDrag);
+    document.removeEventListener("mouseup", endScrollDrag);
+    if (hostWindow) hostWindow.removeEventListener("blur", endScrollDrag);
+}
+function startScrollDrag(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    const metrics = scrollMetrics();
+    if (!metrics.maximum || !Number.isFinite(event.clientY)) return;
+    event.preventDefault();
+    if (typeof scrollRail.focus === "function") scrollRail.focus();
+    if (event.target !== scrollThumb) {
+        const box = scrollRail.getBoundingClientRect();
+        const thumbTop = contentScrollTop / metrics.maximum * metrics.travel;
+        scrollPanelTo(contentScrollTop + (event.clientY < box.top + 4 + thumbTop ? -1 : 1) * metrics.height * .9);
+        return;
+    }
+    scrollDrag = { y: event.clientY, top: contentScrollTop };
+    scrollRail.setAttribute("data-dragging", "true");
+    document.addEventListener("mousemove", onScrollDrag);
+    document.addEventListener("mouseup", endScrollDrag);
+    if (hostWindow) hostWindow.addEventListener("blur", endScrollDrag);
+}
+scrollViewport.addEventListener("wheel", onPanelWheel);
+scrollViewport.addEventListener("mousewheel", onPanelWheel);
+scrollRail.addEventListener("wheel", onPanelWheel);
+scrollRail.addEventListener("mousewheel", onPanelWheel);
+scrollViewport.addEventListener("keydown", onScrollKey);
+scrollRail.addEventListener("keydown", onScrollKey);
+scrollRail.addEventListener("mousedown", startScrollDrag);
+let contentPan = null;
+function canPanContent(target) {
+    for (let node = target; node; node = node.parentNode) {
+        const tag = String(node.tagName || node.tag || "").toLowerCase();
+        const role = node.getAttribute && node.getAttribute("role");
+        const classes = String(node.className || "").split(/\s+/);
+        if (["input", "textarea", "select", "button", "label", "a", "pre", "p", "span", "h2", "h3", "img"].includes(tag) ||
+            ["button", "tab", "combobox", "listbox", "option"].includes(role) ||
+            classes.includes("ui-select") || node.id === "resources" || node.id === "lanhuBoardList") return false;
+        if (node === scrollViewport || node === scrollContent) return true;
+    }
+    return false;
+}
+function moveContentPan(event) {
+    if (!contentPan || !Number.isFinite(event.clientY)) return;
+    if (contentPan.pointerId !== null && event.pointerId !== contentPan.pointerId) return;
+    if (event.buttons === 0) { endContentPan(); return; }
+    const distance = event.clientY - contentPan.y;
+    if (!contentPan.moving && Math.abs(distance) < 4) return;
+    contentPan.moving = true;
+    scrollViewport.setAttribute("data-panning", "true");
+    scrollPanelTo(contentPan.top - distance);
+    event.preventDefault();
+}
+function endContentPan(event) {
+    if (event && contentPan && contentPan.pointerId !== null && event.pointerId !== undefined && event.pointerId !== contentPan.pointerId) return;
+    const pan = contentPan; contentPan = null;
+    scrollViewport.setAttribute("data-panning", "false");
+    for (const target of [scrollViewport, document]) {
+        target.removeEventListener("pointermove", moveContentPan);
+        target.removeEventListener("pointerup", endContentPan);
+        target.removeEventListener("pointercancel", endContentPan);
+        target.removeEventListener("mousemove", moveContentPan);
+        target.removeEventListener("mouseup", endContentPan);
+    }
+    if (hostWindow) hostWindow.removeEventListener("blur", endContentPan);
+    if (pan && pan.pointerId !== null && typeof scrollViewport.releasePointerCapture === "function") {
+        try { scrollViewport.releasePointerCapture(pan.pointerId); } catch (_) { /* The host may already have released capture. */ }
+    }
+}
+function startContentPan(event) {
+    if (destroyed || contentPan || scrollDrag || event.isPrimary === false || (event.button !== undefined && event.button !== 0)) return;
+    if (!Number.isFinite(event.clientY) || !scrollMetrics().maximum || !canPanContent(event.target)) return;
+    const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : null;
+    contentPan = { pointerId, y: event.clientY, top: contentScrollTop, moving: false };
+    event.preventDefault();
+    for (const target of [scrollViewport, document]) {
+        target.addEventListener("pointermove", moveContentPan);
+        target.addEventListener("pointerup", endContentPan);
+        target.addEventListener("pointercancel", endContentPan);
+        target.addEventListener("mousemove", moveContentPan);
+        target.addEventListener("mouseup", endContentPan);
+    }
+    if (hostWindow) hostWindow.addEventListener("blur", endContentPan);
+    if (pointerId !== null && typeof scrollViewport.setPointerCapture === "function") {
+        try { scrollViewport.setPointerCapture(pointerId); } catch (_) { /* Document listeners also cover hosts without capture. */ }
+    }
+}
+scrollViewport.addEventListener("pointerdown", startContentPan);
+scrollViewport.addEventListener("mousedown", startContentPan);
+function disposeScrollbar() {
+    endContentPan();
+    scrollViewport.removeEventListener("pointerdown", startContentPan);
+    scrollViewport.removeEventListener("mousedown", startContentPan);
+    endScrollDrag();
+    scrollViewport.removeEventListener("wheel", onPanelWheel);
+    scrollViewport.removeEventListener("mousewheel", onPanelWheel);
+    scrollRail.removeEventListener("wheel", onPanelWheel);
+    scrollRail.removeEventListener("mousewheel", onPanelWheel);
+    scrollViewport.removeEventListener("keydown", onScrollKey);
+    scrollRail.removeEventListener("keydown", onScrollKey);
+    scrollRail.removeEventListener("mousedown", startScrollDrag);
+}
 function updateInputClipping() {
     if (destroyed || typeof $("panelViewport").getBoundingClientRect !== "function") return;
     const viewport = $("panelViewport").getBoundingClientRect();
@@ -193,9 +367,10 @@ function updateInputClipping() {
 }
 function scheduleInputClipping() {
     if (destroyed) return;
+    updateScrollbar();
     updateInputClipping();
     if (clippingFrame !== null || !hostWindow || typeof hostWindow.requestAnimationFrame !== "function") return;
-    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; updateInputClipping(); });
+    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; updateScrollbar(); updateInputClipping(); });
 }
 function onOutsideSelectClick(event) {
     if (openedSelect && !openedSelect.element.contains(event.target)) closeSelectMenus();
@@ -207,7 +382,6 @@ if (hostWindow && typeof hostWindow.addEventListener === "function") hostWindow.
 function lanhuMessage(message) {
     if (destroyed) return;
     $("lanhuStatus").textContent = message;
-    $("authoringLanhuStatus").textContent = message;
 }
 const TEST_PROJECT_ID = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
 let boardScope = 1;
@@ -224,7 +398,6 @@ function updateLanhuControls(syncStatus = false) {
     const state = lanhuHost && lanhuHost.status();
     const locked = busy || lanhuBusy || !!(state && state.uploading);
     const canUpload = state && state.connected && state.loggedIn && state.projectId === TEST_PROJECT_ID;
-    $("authoringUploadLanhu").disabled = locked || !canUpload;
     $("lanhuUploadAction").disabled = locked || !canUpload || !$("lanhuDevice").value || !$("lanhuScale").value;
     $("connectLanhu").disabled = locked;
     $("lanhuLoginAction").disabled = locked || !!(state && state.loggedIn);
@@ -281,19 +454,13 @@ function renderLanhuScales(device, selected, scales) {
     fillSelect("lanhuScale", rows.map(item => ({ id: item.label, name: item.label + " · " + item.value })), selected, "请选择设计倍数");
 }
 function showTab(name) {
+    endContentPan();
     closeSelectMenus();
-    activeTab = name;
     $("authoringPane").style.display = name === "authoring" ? "block" : "none";
     $("lanhuPane").style.display = name === "lanhu" ? "block" : "none";
     $("tabAuthoring").setAttribute("aria-selected", name === "authoring" ? "true" : "false");
     $("tabLanhu").setAttribute("aria-selected", name === "lanhu" ? "true" : "false");
-    positionLanhuMount();
     renderLanhuWorkspace();
-}
-function positionLanhuMount() {
-    const destination = $(activeTab === "authoring" && inlineLanhuOpen ? "authoringLanhuInline" : "lanhuFullMount");
-    const workspace = $("lanhuWorkspace");
-    if (workspace.parentNode !== destination) destination.appendChild(workspace);
 }
 lanhuHost = createLanhuHost({ ps, uxp, document, window: typeof window === "undefined" ? {} : window,
     nativeRequire: require,
@@ -321,7 +488,6 @@ async function connectLanhu() { return lanhuTask(async () => {
 async function uploadLanhu() {
     return lanhuTask(async () => {
         await lanhuHost.upload();
-        if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu");
     });
 }
 function openLanhuWorkspace() {
@@ -330,16 +496,7 @@ function openLanhuWorkspace() {
 }
 onClick($("tabAuthoring"), () => showTab("authoring"));
 onClick($("tabLanhu"), openLanhuWorkspace);
-onClick($("authoringOpenLanhu"), openLanhuWorkspace);
-onClick($("authoringToggleLanhu"), async () => {
-    inlineLanhuOpen = !inlineLanhuOpen;
-    $("authoringLanhuInline").style.display = inlineLanhuOpen ? "block" : "none";
-    $("authoringToggleLanhu").textContent = inlineLanhuOpen ? "收起本页蓝湖工具" : "在本页展开蓝湖工具";
-    positionLanhuMount(); renderLanhuWorkspace();
-    if (inlineLanhuOpen && !lanhuHost.status().connected) await connectLanhu();
-});
 onClick($("connectLanhu"), connectLanhu);
-onClick($("authoringUploadLanhu"), uploadLanhu);
 onClick($("lanhuUploadAction"), uploadLanhu);
 onClick($("lanhuLoginAction"), () => lanhuTask(async () => {
     const credentials = { account: $("lanhuAccount").value, password: $("lanhuPassword").value };
@@ -373,14 +530,6 @@ for (const name of ["Upload", "Slice"]) onClick($("lanhu" + name + "Tab"), () =>
         $("lanhu" + item + "View").style.display = item === name ? "block" : "none";
         $("lanhu" + item + "Tab").setAttribute("aria-selected", item === name ? "true" : "false");
     }
-});
-onClick($("openLanhuOfficial"), async () => {
-    try {
-        if (!uxp.pluginManager) throw new Error("当前宿主未提供插件通信，请从增效工具菜单打开蓝湖。");
-        const plugin = Array.from(await uxp.pluginManager.getPlugins()).find(item => item.id === "com.lanhu.ps");
-        if (!plugin) throw new Error("没有找到已安装的官方蓝湖插件。");
-        await plugin.showPanel("showlanhu");
-    } catch (error) { lanhuMessage(errorText(error)); }
 });
 showTab("authoring");
 
@@ -862,6 +1011,7 @@ async function registerSelectionEvents() {
 uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy() {
     destroyed = true;
     closeSelectMenus();
+    disposeScrollbar();
     document.removeEventListener("click", onOutsideSelectClick);
     $("panelViewport").removeEventListener("scroll", scheduleInputClipping);
     if (hostWindow && typeof hostWindow.removeEventListener === "function") hostWindow.removeEventListener("resize", scheduleInputClipping);

@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
-<div class="app-header"><span class="app-name">资源创作 × 蓝湖</span><span class="app-version">隔离试用 · 0.6.6</span></div>
+<div class="app-header"><span class="app-name">资源创作 × 蓝湖</span><span class="app-version">隔离试用 · 0.6.9</span></div>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<div id="tabAuthoring" role="tab" aria-selected="true" aria-controls="authoringPane" class="ui-button" tabindex="0">资源创作 · 0.6.6</div>
+<div id="tabAuthoring" role="tab" aria-selected="true" aria-controls="authoringPane" class="ui-button" tabindex="0">资源创作 · 0.6.9</div>
 <div id="tabLanhu" role="tab" aria-selected="false" aria-controls="lanhuPane" class="ui-button" tabindex="0">蓝湖工具</div>
 </div>
-<div id="panelViewport"><div class="panel-content">
+<div id="panelDivider" aria-hidden="true"></div>
+<div id="panelScroll">
+<div id="panelViewport"><div id="panelContent" class="panel-content">
 <div id="authoringPane" role="tabpanel" aria-labelledby="tabAuthoring" style="display: block;">
 <div class="page-heading"><h2>公共资源</h2><p>从源图创建资源，在不同尺寸的界面中复用。</p></div>
 <p class="scope">隔离试用：仅测试项目可上传。PSD 请正常 Cmd+S 保存。</p>
@@ -19,25 +21,19 @@
 <div id="newResourceSettings">
 <label>新资源名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
 <p>首次新建填写；引用现有资源自动继承。高级发布新版本时也使用以下设置。</p>
-<div class="row inset-row"><label>源边框 L<input id="left" type="number" min="0" value="0"></label><label>T<input id="top" type="number" min="0" value="0"></label><label>R<input id="right" type="number" min="0" value="0"></label><label>B<input id="bottom" type="number" min="0" value="0"></label></div>
+<div class="row inset-row"><label>左边框<input id="left" type="number" min="0" value="0"></label><label>上边框<input id="top" type="number" min="0" value="0"></label><label>右边框<input id="right" type="number" min="0" value="0"></label><label>下边框<input id="bottom" type="number" min="0" value="0"></label></div>
 <label>采样<div id="sampling" class="ui-select" aria-label="采样"></div></label>
 <p>源透明留白：显式补在选层非空边界外，单位为源像素。默认 0 按非空边界采集，不猜原画布。</p>
-<div class="row inset-row"><label>留白 L<input id="padLeft" type="number" min="0" value="0"></label><label>T<input id="padTop" type="number" min="0" value="0"></label><label>R<input id="padRight" type="number" min="0" value="0"></label><label>B<input id="padBottom" type="number" min="0" value="0"></label></div>
+<div class="row inset-row"><label>左留白<input id="padLeft" type="number" min="0" value="0"></label><label>上留白<input id="padTop" type="number" min="0" value="0"></label><label>右留白<input id="padRight" type="number" min="0" value="0"></label><label>下留白<input id="padBottom" type="number" min="0" value="0"></label></div>
 </div>
 </div>
 <div class="workspace-card"><h3>目标尺寸</h3>
-<div class="row"><label>目标画布宽<input id="targetWidth" type="number" min="1" value="64"></label><label>高<input id="targetHeight" type="number" min="1" value="48"></label></div>
+<div class="row"><label>目标画布宽度<input id="targetWidth" type="number" min="1" value="64"></label><label>目标画布高度<input id="targetHeight" type="number" min="1" value="48"></label></div>
 <p id="targetHint">默认取已绑定的完整目标画布，或当前选层整数非空边界；透明外沿不自动推测。</p>
 </div>
 <div class="primary-action-area">
 <div id="primaryAction" class="ui-button primary-action" role="button" tabindex="0">创建资源并应用到选层</div>
 <pre id="status" role="status"></pre>
-</div>
-<div class="lanhu-quick-actions"><h3>蓝湖协作</h3>
-<p id="authoringLanhuStatus" role="status">尚未连接蓝湖工具。</p>
-<div class="tool-actions"><div id="authoringOpenLanhu" class="ui-button" role="button" tabindex="0">打开蓝湖工具</div><div id="authoringUploadLanhu" aria-disabled="true" class="ui-button" role="button" tabindex="0">上传到蓝湖</div></div>
-<div id="authoringToggleLanhu" class="ui-button" role="button" tabindex="0">在本页展开蓝湖工具</div>
-<div id="authoringLanhuInline" style="display: none;"></div>
 </div>
 <div id="toggleAdvanced" class="ui-button" role="button" tabindex="0">显示高级操作</div>
 <div id="advancedPanel" style="display: none;">
@@ -89,7 +85,7 @@
 <div id="lanhuUploadView">
 <div class="lanhu-card">
 <h3>设计倍数</h3>
-<div class="row"><label>平台<div id="lanhuDevice" class="ui-select" aria-label="平台"></div></label><label>倍数<div id="lanhuScale" class="ui-select" aria-label="设计倍数"></div></label></div>
+<div class="row"><label>平台<div id="lanhuDevice" class="ui-select" aria-label="平台"></div></label><label>设计倍数<div id="lanhuScale" class="ui-select" aria-label="设计倍数"></div></label></div>
 <h3>上传画板</h3>
 <div class="tool-actions"><div id="lanhuBoardsAll" aria-pressed="true" class="ui-button" role="button" tabindex="0">该页全部画板</div><div id="lanhuBoardsSelected" aria-pressed="false" class="ui-button" role="button" tabindex="0">选中画板</div></div>
 <p id="lanhuDocument">当前文档：未打开 PSD</p>
@@ -104,10 +100,10 @@
 <div id="lanhuSliceLayer" class="ui-button" role="button" tabindex="0">标记选层为切图</div><div id="lanhuSliceGroup" class="ui-button" role="button" tabindex="0">创建切图分组</div><div id="lanhuUnslice" class="ui-button" role="button" tabindex="0">取消选层切图</div>
 <div class="tool-actions"><div id="lanhuShowSlices" class="ui-button" role="button" tabindex="0">显示切图</div><div id="lanhuHideSlices" class="ui-button" role="button" tabindex="0">隐藏切图</div></div>
 </div>
-<div id="openLanhuOfficial" class="ui-button lanhu-secondary" role="button" tabindex="0">打开官方蓝湖面板</div>
 </div></div>
-<div id="lanhuMount" style="display: none;" aria-hidden="true"></div>
 </div>
 </div></div>
+<div id="panelScrollbar" role="scrollbar" aria-label="面板滚动" aria-controls="panelViewport" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0"><div id="panelScrollThumb"></div></div>
+</div>
 <script src="panel.js"></script>
 </body></html>

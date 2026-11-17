@@ -1068,16 +1068,17 @@ test("inline resource rows cannot change the chosen version while primary action
     assert.equal((await env.metadata()).nodes[10].assetRef, ref, "Choosing another row alone must not write a binding.");
 });
 
-test("tool tabs show native controls immediately, preserve inputs and share one inline workspace and upload connection", async () => {
+test("tool tabs keep the internal workspace in its own tab, preserve inputs and reuse one connection", async () => {
     const state = { connected: false, uploading: false, loggedIn: false, projectId: null };
     let connections = 0, uploads = 0, destroyed = 0;
     const env = await panelHarness(undefined, undefined, { lanhuHost: ({ onStatus }) => ({
         status: () => state,
+        workspace: () => ({ ...state, deviceType: "Web", deviceScale: "@1x", scales: { Web: [{ label: "@1x", value: "网页" }] } }),
         async connect() { connections++; state.connected = true; state.loggedIn = true; state.projectId = "cfea1199-7c07-48d9-86ef-cdbd3385c237"; onStatus("connected"); },
         async upload() { uploads++; onStatus("handed to official upload"); },
         async destroy() { destroyed++; }
     }) });
-    assert.equal(env.elements.authoringUploadLanhu.disabled, true, "Generic refresh completion must not enable an unconnected upload action.");
+    for (const id of ["authoringUploadLanhu", "authoringOpenLanhu", "authoringToggleLanhu", "authoringLanhuStatus", "authoringLanhuInline", "openLanhuOfficial", "lanhuMount"]) assert.equal(env.elements[id], undefined);
     env.elements.displayName.value = "正在创作的名称"; env.elements.targetWidth.value = "192";
     await env.click("tabLanhu");
     assert.equal(connections, 1, "Entering the tab initializes the business connection without a load-interface landing page.");
@@ -1086,16 +1087,15 @@ test("tool tabs show native controls immediately, preserve inputs and share one 
     await env.click("connectLanhu"); assert.equal(connections, 1);
     await env.click("tabAuthoring");
     assert.equal(env.elements.displayName.value, "正在创作的名称"); assert.equal(env.elements.targetWidth.value, "192");
-    assert.equal(env.elements.authoringUploadLanhu.disabled, false);
-    await env.click("authoringToggleLanhu");
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
-    assert.equal(connections, 1, "Moving the same mount must not create another login/session instance.");
-    await env.click("authoringUploadLanhu"); assert.equal(uploads, 1);
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
     await env.click("tabLanhu");
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.lanhuFullMount);
+    env.elements.lanhuDevice.value = "Web"; env.elements.lanhuScale.value = "@1x";
+    await env.click("connectLanhu");
+    await env.click("lanhuUploadAction"); assert.equal(uploads, 1);
+    assert.equal(connections, 1, "Switching tabs reuses the internal session.");
     await env.click("tabAuthoring");
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(env.elements.authoringPane.style.display, "block");
+    assert.equal(env.elements.lanhuPane.style.display, "none");
+    assert.equal(env.elements.displayName.value, "正在创作的名称");
     assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined); assert.equal(env.state.history.length, 0);
     await env.entrypoints.value.plugin.destroy(); assert.equal(destroyed, 1);
 });
@@ -1116,7 +1116,7 @@ test("official upload progress blocks authoring writes and a failed Lanhu connec
     await env.click("connectLanhu");
     assert.match(env.elements.lanhuStatus.textContent, /操作未完成/);
     assert.match(env.elements.errorDetails.textContent, /controlled connection failure/);
-    assert.equal(env.elements.authoringUploadLanhu.disabled, true);
+    assert.equal(env.elements.lanhuUploadAction.disabled, true);
 });
 
 test("panel reports supported-layer failures in Chinese and retains original diagnostics without changing metadata", async () => {
@@ -1149,7 +1149,6 @@ test("native Lanhu workspace renders real lists and wires account, selection and
     }) });
     await env.click("tabLanhu");
     assert.ok(env.elements.lanhuLoginAction.listeners.click);
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.lanhuFullMount);
     assert.equal(env.elements.lanhuBoardList.children[0].textContent, "主界面");
     assert.equal(env.elements.lanhuUploadAction.disabled, true);
     env.elements.lanhuAccount.value = "account"; env.elements.lanhuPassword.value = "PRIVATE";
@@ -1169,15 +1168,15 @@ test("native Lanhu workspace renders real lists and wires account, selection and
     await env.click("lanhuSliceTab");
     assert.equal(env.elements.lanhuSliceView.style.display, "block");
     assert.equal(env.elements.lanhuUploadView.style.display, "none");
-    await env.click("tabAuthoring"); await env.click("authoringToggleLanhu");
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
+    await env.click("tabAuthoring"); await env.click("tabLanhu");
+    assert.equal(env.elements.lanhuPane.style.display, "block");
     assert.equal(env.elements.lanhuAccountSummary.textContent, "美术");
     assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined);
     assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
     assert.equal(calls.some(item => /upload|slice/i.test(item.name)), false);
 });
 
-test("native browser authorization button shares pending and cancel state across both tool locations", async () => {
+test("native browser authorization preserves pending and cancel state across tab switches", async () => {
     const view = { connected: false, loggedIn: false, uploading: false, browserAuthorizing: false, teams: [], projects: [], groups: [], scales: {} };
     const calls = [];
     const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({
@@ -1188,8 +1187,8 @@ test("native browser authorization button shares pending and cancel state across
     assert.equal(view.browserAuthorizing, true); assert.equal(env.elements.lanhuBrowserAuth.disabled, true);
     assert.equal(env.elements.lanhuLoginAction.disabled, true); assert.equal(env.elements.lanhuCancelAuth.style.display, "block");
     assert.match(env.elements.lanhuAuthHint.textContent, /等待浏览器授权/);
-    await env.click("tabAuthoring"); await env.click("authoringToggleLanhu");
-    assert.equal(env.elements.lanhuWorkspace.parentNode, env.elements.authoringLanhuInline);
+    await env.click("tabAuthoring"); await env.click("tabLanhu");
+    assert.equal(env.elements.lanhuPane.style.display, "block");
     await env.click("lanhuCancelAuth");
     assert.equal(view.browserAuthorizing, false); assert.equal(env.elements.lanhuBrowserAuth.disabled, false);
     assert.equal(env.elements.lanhuCancelAuth.style.display, "none");
@@ -1285,4 +1284,133 @@ test("scroll clipping hides native editors outside the content viewport and rest
     assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
     await env.entrypoints.value.plugin.destroy();
     assert.equal(env.documentEvents.click, undefined); assert.equal(env.elements.panelViewport.listeners.scroll, undefined);
+});
+
+
+test("panel scroll rail follows wheel, paging, dragging, resize and cleanup without writing PSD", async () => {
+    const env = await panelHarness();
+    const viewport = env.elements.panelViewport, rail = env.elements.panelScrollbar, thumb = env.elements.panelScrollThumb;
+    viewport.clientHeight = 300; env.elements.panelContent.scrollHeight = 1200; viewport.scrollTop = 0;
+    rail.clientHeight = 308; rail.getBoundingClientRect = () => ({ top: 88 });
+    Object.defineProperty(viewport, "scrollTop", { get: () => 0, set() {} });
+    let prevented = 0;
+    const event = values => ({ target: viewport, preventDefault() { prevented++; }, ...values });
+    viewport.listeners.wheel(event({ deltaY: 2, deltaMode: 1 }));
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 40); assert.equal(thumb.style.height, "75px");
+    assert.equal(rail.getAttribute("aria-valuenow"), "40");
+    rail.listeners.keydown(event({ target: rail, key: "End" }));
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 900); assert.equal(thumb.style.marginTop, "225px");
+    rail.listeners.mousedown(event({ target: thumb, clientY: 100, button: 0 }));
+    env.documentEvents.mousemove(event({ clientY: 0 }));
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 500); assert.equal(rail.getAttribute("data-dragging"), "true");
+    env.documentEvents.mouseup();
+    assert.equal(env.documentEvents.mousemove, undefined); assert.equal(rail.getAttribute("data-dragging"), "false");
+    rail.listeners.mousedown(event({ target: rail, clientY: 90, button: 0 }));
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 230);
+    viewport.listeners.keydown(event({ target: env.elements.targetWidth, key: "Home" }));
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 230, "Editing Home/End belongs to the input.");
+    viewport.listeners.wheel(event({ deltaY: 200, ctrlKey: true }));
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 230);
+    env.elements.panelContent.scrollHeight = 100; viewport.listeners.scroll();
+    assert.equal(parseFloat(env.elements.panelContent.style.top), 0); assert.equal(rail.style.visibility, "hidden");
+    assert.equal(rail.getAttribute("tabindex"), "-1");
+    assert.ok(prevented >= 5);
+    await env.entrypoints.value.plugin.destroy();
+    assert.equal(viewport.listeners.wheel, undefined); assert.equal(rail.listeners.mousedown, undefined);
+    assert.equal(rail.listeners.keydown, undefined); assert.equal(viewport.listeners.keydown, undefined);
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
+});
+
+test("panel scrolling yields to a nested list until it reaches the wheel direction boundary", async () => {
+    const env = await panelHarness(), viewport = env.elements.panelViewport, list = env.elements.resources;
+    viewport.clientHeight = 300; env.elements.panelContent.scrollHeight = 1200; viewport.scrollTop = 0;
+    env.elements.panelScrollbar.listeners.keydown({ target: env.elements.panelScrollbar, key: "Home", preventDefault() {} });
+    viewport.listeners.wheel({ deltaY: 100, preventDefault() {} });
+    list.clientHeight = 144; list.scrollHeight = 400; list.scrollTop = 0;
+    let prevented = 0;
+    const event = { target: list.children[0], deltaY: 50, preventDefault() { prevented++; } };
+    viewport.listeners.wheel(event);
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 100); assert.equal(prevented, 0);
+    list.scrollTop = 256; viewport.listeners.wheel(event);
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 150); assert.equal(prevented, 1);
+    viewport.listeners.wheel({ ...event, deltaY: -50 });
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 150, "A nested list can still scroll upward at its bottom edge.");
+    list.scrollTop = 0; viewport.listeners.wheel({ ...event, deltaY: -50 });
+    assert.equal(-parseFloat(env.elements.panelContent.style.top), 100);
+});
+
+
+test("legacy Photoshop wheel events move content and thumb even when native hidden scrollTop cannot change", async () => {
+    const env = await panelHarness(), viewport = env.elements.panelViewport, content = env.elements.panelContent, rail = env.elements.panelScrollbar;
+    viewport.clientHeight = 300; content.offsetHeight = 1200; rail.clientHeight = 308;
+    Object.defineProperty(viewport, "scrollTop", { get: () => 0, set() {} });
+    let prevented = 0;
+    viewport.listeners.mousewheel({ type: "mousewheel", target: content, wheelDelta: -120, preventDefault() { prevented++; } });
+    assert.equal(content.style.top, "-120px");
+    assert.equal(rail.getAttribute("aria-valuenow"), "120");
+    assert.equal(env.elements.panelScrollThumb.style.marginTop, "30px");
+    viewport.listeners.wheel({ type: "wheel", target: content, deltaY: 50, preventDefault() { prevented++; } });
+    viewport.listeners.mousewheel({ type: "mousewheel", target: content, wheelDelta: -50, preventDefault() { prevented++; } });
+    assert.equal(content.style.top, "-170px", "Duplicate legacy events must not double the same gesture.");
+    assert.equal(prevented, 2);
+    await env.entrypoints.value.plugin.destroy();
+    assert.equal(viewport.listeners.mousewheel, undefined); assert.equal(rail.listeners.mousewheel, undefined);
+});
+
+test("blank content drags with pointer capture, moves the scrollbar and releases on cancellation", async () => {
+    const env = await panelHarness(), viewport = env.elements.panelViewport, content = env.elements.panelContent, rail = env.elements.panelScrollbar;
+    viewport.clientHeight = 300; content.offsetHeight = 1200; rail.clientHeight = 308;
+    const captures = [], releases = [];
+    viewport.setPointerCapture = id => captures.push(id); viewport.releasePointerCapture = id => releases.push(id);
+    const event = extra => ({ target: content, pointerId: 7, clientY: 200, button: 0, buttons: 1, preventDefault() {}, ...extra });
+    viewport.listeners.wheel({ deltaY: 100, preventDefault() {} });
+    viewport.listeners.pointerdown(event());
+    assert.deepEqual(captures, [7]);
+    viewport.listeners.mousedown(event({ pointerId: undefined }));
+    assert.deepEqual(captures, [7], "Compatibility mousedown must not restart a pointer drag.");
+    viewport.listeners.pointermove(event({ clientY: 198 }));
+    assert.equal(content.style.top, "-100px", "A small click movement must not start panning.");
+    viewport.listeners.pointermove(event({ pointerId: 8, clientY: 100 }));
+    assert.equal(content.style.top, "-100px");
+    viewport.listeners.pointermove(event({ clientY: 100 }));
+    assert.equal(content.style.top, "-200px"); assert.equal(rail.getAttribute("aria-valuenow"), "200");
+    assert.equal(env.elements.panelScrollThumb.style.marginTop, "50px");
+    assert.equal(viewport.getAttribute("data-panning"), "true");
+    env.documentEvents.pointermove(event({ clientY: 1000 })); assert.equal(content.style.top, "0px");
+    env.documentEvents.pointermove(event({ clientY: -2000 })); assert.equal(content.style.top, "-900px");
+    viewport.listeners.pointercancel(event());
+    assert.deepEqual(releases, [7]); assert.equal(viewport.getAttribute("data-panning"), "false");
+    assert.equal(env.documentEvents.pointermove, undefined); assert.equal(viewport.listeners.pointermove, undefined);
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
+});
+
+test("blank content mouse dragging works without pointer capture and cleans up on release and destroy", async () => {
+    const env = await panelHarness(), viewport = env.elements.panelViewport, content = env.elements.panelContent;
+    viewport.clientHeight = 300; content.offsetHeight = 1200;
+    const event = extra => ({ target: viewport, clientY: 200, button: 0, buttons: 1, preventDefault() {}, ...extra });
+    viewport.listeners.mousedown(event());
+    env.documentEvents.mousemove(event({ clientY: 120 })); assert.equal(content.style.top, "-80px");
+    env.documentEvents.mouseup(event({ buttons: 0 }));
+    assert.equal(env.documentEvents.mousemove, undefined); assert.equal(viewport.getAttribute("data-panning"), "false");
+    viewport.listeners.mousedown(event()); env.documentEvents.mousemove(event({ buttons: 0 }));
+    assert.equal(content.style.top, "-80px"); assert.equal(env.documentEvents.mousemove, undefined);
+    viewport.listeners.mousedown(event());
+    await env.entrypoints.value.plugin.destroy();
+    for (const name of ["pointerdown", "mousedown", "pointermove", "pointerup", "pointercancel", "mousemove", "mouseup"]) assert.equal(viewport.listeners[name], undefined);
+    assert.equal(env.documentEvents.mousemove, undefined); assert.equal(env.documentEvents.pointerup, undefined);
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
+});
+
+test("content drag ignores editors, controls, text, secondary buttons and a page with no overflow", async () => {
+    const env = await panelHarness(), viewport = env.elements.panelViewport, content = env.elements.panelContent;
+    viewport.clientHeight = 300; content.offsetHeight = 1200;
+    const event = extra => ({ target: content, clientY: 200, button: 0, preventDefault() { throw new Error("Must preserve native interaction"); }, ...extra });
+    for (const target of [env.elements.targetWidth, env.elements.primaryAction, env.elements.sampling, env.elements.resources,
+        { tagName: "P", parentNode: content }, { tagName: "DIV", parentNode: env.elements.primaryAction }]) {
+        viewport.listeners.mousedown(event({ target })); assert.equal(env.documentEvents.mousemove, undefined);
+    }
+    viewport.listeners.mousedown(event({ button: 2 })); assert.equal(env.documentEvents.mousemove, undefined);
+    viewport.listeners.pointerdown(event({ isPrimary: false })); assert.equal(env.documentEvents.pointermove, undefined);
+    content.offsetHeight = 200; viewport.listeners.mousedown(event()); assert.equal(env.documentEvents.mousemove, undefined);
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
 });

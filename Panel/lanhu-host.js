@@ -7,7 +7,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     let operation = null;
     let destroyed = false;
     let runtimeFactory = null;
-    let shadow = null;
+    let runtimeRoot = null;
     let epoch = 0;
     const listeners = [];
     const timers = new Set();
@@ -314,8 +314,8 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
         }
         const removals = [];
         for (const item of photoshopListeners) removals.push(removePhotoshopListener(item));
-        if (shadow) {
-            try { shadow.textContent = ""; } catch (cause) { failures.push(cause); }
+        if (runtimeRoot) {
+            try { runtimeRoot.textContent = ""; } catch (cause) { failures.push(cause); }
         }
         for (const result of await Promise.allSettled(removals)) if (result.status === "rejected") failures.push(result.reason);
         if (failures.length) throw error("LANHU_CLEANUP_FAILED", "蓝湖运行环境清理失败，请重新加载插件。", failures[0]);
@@ -325,20 +325,12 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
         if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
         const contextEpoch = epoch;
         const active = () => !destroyed && epoch === contextEpoch;
-        const mount = document.getElementById("lanhuMount");
-        if (!mount || typeof mount.attachShadow !== "function") {
-            reject("LANHU_SHADOW_UNAVAILABLE", "当前宿主不支持隔离蓝湖界面，请使用官方蓝湖面板。");
-        }
-        if (!shadow) {
-            if (mount.shadowRoot) reject("LANHU_MOUNT_IN_USE", "蓝湖界面挂载区已被占用，请重新加载插件。");
-            shadow = mount.attachShadow({ mode: "open" });
-        }
-        const style = document.createElement("style");
-        style.textContent = ":host { display: block; width: 100%; min-height: 632px; } [data-gameui-lanhu-body] { width: 100%; min-height: 632px; font-size: 12px; }";
-        shadow.appendChild(style);
+        // The bundled business runtime never joins the panel DOM. A detached
+        // root scopes its selectors and styles, including on hosts without Shadow DOM.
+        if (!runtimeRoot) runtimeRoot = document.createElement("div");
         const body = document.createElement("div"); body.setAttribute("data-gameui-lanhu-body", "");
         const app = document.createElement("div"); app.setAttribute("id", "app");
-        body.appendChild(app); shadow.appendChild(body);
+        body.appendChild(app); runtimeRoot.appendChild(body);
         let scopedWindow;
         function schedule(kind, callback, delay, ...args) {
             if (!active()) return null;
@@ -422,23 +414,23 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             return photoshopProxy;
         }
         const localDocument = new Map();
-        const specialSelector = selector => selector === "head" ? shadow : selector === "body" || selector === "html" ? body : null;
+        const specialSelector = selector => selector === "head" ? runtimeRoot : selector === "body" || selector === "html" ? body : null;
         const scopedDocument = new Proxy(Object.create(null), {
             get(_, key) {
                 const target = document;
-                if (key === "head") return shadow;
+                if (key === "head") return runtimeRoot;
                 if (key === "body" || key === "documentElement") return body;
                 if (key === "defaultView") return scopedWindow;
-                if (key === "querySelector") return selector => specialSelector(selector) || shadow.querySelector(selector);
+                if (key === "querySelector") return selector => specialSelector(selector) || runtimeRoot.querySelector(selector);
                 if (key === "querySelectorAll") return selector => {
-                    const special = specialSelector(selector); return special ? [special] : shadow.querySelectorAll(selector);
+                    const special = specialSelector(selector); return special ? [special] : runtimeRoot.querySelectorAll(selector);
                 };
                 if (key === "getElementById") return id => {
-                    if (typeof shadow.getElementById === "function") return shadow.getElementById(String(id));
-                    return Array.from(shadow.querySelectorAll("[id]")).find(node => node.getAttribute("id") === String(id)) || null;
+                    if (typeof runtimeRoot.getElementById === "function") return runtimeRoot.getElementById(String(id));
+                    return Array.from(runtimeRoot.querySelectorAll("[id]")).find(node => node.getAttribute("id") === String(id)) || null;
                 };
-                if (key === "addEventListener") return (type, callback, options) => { if (active()) track(shadow, type, callback, options); };
-                if (key === "removeEventListener") return (type, callback, options) => untrack(shadow, type, callback, options);
+                if (key === "addEventListener") return (type, callback, options) => { if (active()) track(runtimeRoot, type, callback, options); };
+                if (key === "removeEventListener") return (type, callback, options) => untrack(runtimeRoot, type, callback, options);
                 if (localDocument.has(key)) return localDocument.get(key);
                 const value = Reflect.get(target, key, target);
                 return typeof value === "function" ? value.bind(target) : value;
@@ -555,10 +547,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
         }
         if (failure) throw failure;
     }
-    async function openOfficial() {
-        reject("LANHU_OFFICIAL_OPEN_UNAVAILABLE", "当前构建尚未接入打开官方蓝湖面板，请从 Photoshop 增效工具菜单打开。");
-    }
-    return { connect, upload, status, workspace, perform, destroy, openOfficial };
+    return { connect, upload, status, workspace, perform, destroy };
 }
 
 module.exports = { createLanhuHost };

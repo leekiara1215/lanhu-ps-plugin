@@ -1,20 +1,27 @@
-/* Shared visual language follows the pinned Lanhu 1.0.32 light theme. */
-html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+/* Shared light theme for all controls owned by this plugin. */
+html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; border: 0; }
 body { display: flex; flex-direction: column; height: 100vh; color: #242833; background: #fff; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 12px; }
 .app-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex: 0 0 44px; width: 100%; height: 44px; padding: 0 16px; box-sizing: border-box; color: #fff; background: #2878ff; }
 .app-name { font-size: 15px; font-weight: bold; }
 .app-version { font-size: 10px; color: #e1ecff; }
-#panelTabs { display: flex; flex-direction: row; flex: 0 0 44px; width: 100%; height: 44px; padding: 0 16px; box-sizing: border-box; background: #fff; border-bottom: 1px solid #e8ebf0; }
+#panelTabs { display: flex; flex-direction: row; flex: 0 0 44px; width: 100%; height: 44px; padding: 0 16px; box-sizing: border-box; background: #fff; border: 0; }
 #panelTabs .ui-button { flex: 1 1 50%; width: 50%; height: 44px; min-height: 44px; margin: 0; padding: 10px 4px; border: 0; border-bottom: 2px solid #fff; border-radius: 0; color: #6b7280; background: #fff; white-space: normal; }
 #panelTabs .ui-button[aria-selected="true"] { color: #2878ff; border-bottom-color: #2878ff; font-weight: bold; }
-#panelViewport { flex: 1 1 auto; width: 100%; height: calc(100% - 88px); min-height: 0; overflow-x: hidden; overflow-y: scroll; background: #f7f8fa; }
-.panel-content { width: 100%; padding: 16px; box-sizing: border-box; }
+#panelDivider { flex: 0 0 1px; width: 100%; height: 1px; background: #e8ebf0; }
+#panelScroll { display: flex; flex-direction: row; flex: 1 1 auto; width: 100%; min-height: 0; height: calc(100% - 89px); background: #f7f8fa; }
+#panelViewport { flex: 1 1 auto; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; border: 0; background: #f7f8fa; }
+#panelViewport[data-panning="true"] { cursor: grabbing; user-select: none; }
+#panelScrollbar { flex: 0 0 12px; width: 12px; height: 100%; padding: 4px 3px; box-sizing: border-box; background: #f7f8fa; cursor: pointer; }
+#panelScrollThumb { width: 6px; min-height: 28px; border-radius: 3px; background: #c3cbd7; }
+#panelScrollbar:hover #panelScrollThumb, #panelScrollbar[data-dragging="true"] #panelScrollThumb { background: #9aabc1; }
+#panelScrollbar:focus { outline: 1px solid #9bcaff; outline-offset: -2px; }
+.panel-content { position: relative; top: 0; width: 100%; padding: 16px; box-sizing: border-box; }
 .page-heading { padding: 0 0 6px; }
 h2 { font-size: 18px; font-weight: bold; color: #242833; margin: 0 0 6px; }
 h3 { font-size: 13px; font-weight: bold; color: #242833; margin: 0 0 10px; }
 p { color: #7b8391; line-height: 1.6; margin: 6px 0; }
 .field-label { color: #4e5664; }
-.workspace-card, .lanhu-card, .lanhu-quick-actions, #advancedPanel section { display: block; width: 100%; min-width: 0; padding: 12px; margin: 12px 0; box-sizing: border-box; background: #fff; border: 1px solid #e8ebf0; border-radius: 8px; }
+.workspace-card, .lanhu-card, #advancedPanel section { display: block; width: 100%; min-width: 0; padding: 12px; margin: 12px 0; box-sizing: border-box; background: #fff; border: 1px solid #e8ebf0; border-radius: 8px; }
 .scope { background: #edf4ff; padding: 9px 10px; color: #4f74a6; border-radius: 5px; font-size: 11px; }
 label { display: flex; flex-direction: column; flex-wrap: nowrap; width: 100%; min-width: 0; margin: 8px 0; color: #525c6c; line-height: 1.6; }
 input { width: 100%; min-width: 0; height: 32px; margin-top: 4px; padding: 5px 8px; box-sizing: border-box; border: 1px solid #dce1e8; border-radius: 4px; color: #242833; background: #fff; font-size: 12px; }
@@ -34,7 +41,7 @@ input:disabled { color: #9aa1ad; background: #f4f6f8; }
 .inset-row input { padding: 5px 4px; }
 #selection { width: 100%; min-width: 0; margin: 10px 0; padding: 9px 10px; box-sizing: border-box; background: #fff; border-left: 3px solid #2878ff; border-radius: 4px; color: #566273; white-space: pre-wrap; word-wrap: break-word; }
 #identityInfo, #resourceInfo { width: 100%; min-width: 0; margin: 8px 0; color: #667386; white-space: pre-wrap; word-wrap: break-word; }
-#resources { display: block; width: 100%; height: 144px; overflow-x: hidden; overflow-y: scroll; padding: 4px; box-sizing: border-box; border: 1px solid #e8ebf0; border-radius: 4px; background: #fafbfc; }
+#resources { display: block; width: 100%; height: 144px; overflow-x: hidden; overflow-y: auto; padding: 4px; box-sizing: border-box; border: 1px solid #e8ebf0; border-radius: 4px; background: #fafbfc; }
 .resource-choice { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 40px; height: auto; margin: 0 0 4px; padding: 8px; text-align: left; white-space: pre-wrap; word-wrap: break-word; border-color: #e8ebf0; }
 .resource-choice[aria-pressed="true"] { color: #2878ff; background: #edf4ff; border-color: #9bcaff; }
 #resourceCount { font-size: 11px; color: #8993a2; }
@@ -50,9 +57,8 @@ input:disabled { color: #9aa1ad; background: #f4f6f8; }
 pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #9c632b; line-height: 1.6; }
 .scroll-hint, .panel-end { color: #8993a2; }
 .panel-end { border-top: 1px solid #e8ebf0; padding: 10px 0 6px; margin-top: 12px; }
-#authoringPane, #lanhuPane, #lanhuMount, #authoringLanhuInline, #lanhuFullMount { width: 100%; min-width: 0; }
-#lanhuMount { min-height: 0; }
-#authoringLanhuStatus, #lanhuStatus { white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }
+#authoringPane, #lanhuPane, #lanhuFullMount { width: 100%; min-width: 0; }
+#lanhuStatus { white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }
 .lanhu-workspace { width: 100%; min-width: 0; color: #242833; }
 .lanhu-brand { display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 2px 0 10px; border-bottom: 1px solid #e8ebf0; }
 .lanhu-brand h2 { color: #2878ff; margin: 0; font-size: 20px; }
@@ -62,7 +68,7 @@ pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #9c632b; line-hei
 .lanhu-subtabs .ui-button { flex: 1 1 50%; width: 50%; margin: 0; padding: 10px 4px; border: 0; border-bottom: 2px solid #f7f8fa; border-radius: 0; background: #f7f8fa; }
 .lanhu-subtabs .ui-button[aria-selected="true"] { color: #2878ff; border-bottom-color: #2878ff; font-weight: bold; }
 .lanhu-workspace .ui-button[aria-pressed="true"] { color: #2878ff; border-color: #9bcaff; background: #edf4ff; }
-.lanhu-board-list { max-height: 180px; overflow-y: scroll; white-space: pre-wrap; word-wrap: break-word; color: #7b8391; }
+.lanhu-board-list { max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; color: #7b8391; }
 .lanhu-board-row { padding: 9px 4px; color: #525c6c; border-bottom: 1px solid #edf0f4; }
 .lanhu-scope { color: #8f784f; font-size: 11px; }
 .lanhu-workspace .lanhu-secondary { color: #2878ff; background: #fff; border-color: #c3d8fc; }
@@ -85,7 +91,7 @@ label { text-align: left !important; align-items: stretch; }
 .ui-select-trigger[aria-expanded="true"], .ui-select-trigger:focus { border-color: #2878ff; }
 .ui-select[aria-disabled="true"] .ui-select-trigger { background: #f8f9fc; border-color: #e5e9f0; color: #a4adba; cursor: default; }
 .ui-select[aria-disabled="true"] .ui-select-arrow { color: #b8c0cc; }
-.ui-select-list { display: none; width: 100%; max-height: 160px; overflow-x: hidden; overflow-y: scroll; margin-top: 4px; padding: 4px; box-sizing: border-box; border: 1px solid #dce5f2; border-radius: 4px; background: #fff; }
+.ui-select-list { display: none; width: 100%; max-height: 160px; overflow-x: hidden; overflow-y: auto; margin-top: 4px; padding: 4px; box-sizing: border-box; border: 1px solid #dce5f2; border-radius: 4px; background: #fff; }
 .ui-select-option { display: block; width: 100%; min-height: 30px; padding: 6px 8px; box-sizing: border-box; border-radius: 3px; color: #525c6c; white-space: pre-wrap; word-wrap: break-word; cursor: pointer; }
 .ui-select-option[aria-selected="true"], .ui-select-option[data-active="true"], .ui-select-option[aria-disabled="false"]:hover { color: #2878ff; background: #edf4ff; }
 .ui-select-option[aria-disabled="true"] { color: #a4adba; background: #fff; cursor: default; }

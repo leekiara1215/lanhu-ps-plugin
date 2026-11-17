@@ -11,7 +11,6 @@ class Element {
     setAttribute(key, value) { this.attrs[key] = value; }
     getAttribute(key) { return this.attrs[key]; }
     appendChild(child) { this.children.push(child); return child; }
-    attachShadow(options) { assert.equal(options.mode, "open"); assert.equal(this.shadowRoot, undefined); return this.shadowRoot = new Element("shadow"); }
     querySelectorAll(selector) {
         const all = [...this.children];
         for (let index = 0; index < all.length; index++) all.push(...all[index].children);
@@ -25,12 +24,12 @@ class Element {
 }
 
 function fixture(overrides = {}) {
-    const mount = new Element("mount"), outside = new Element("outside"), messages = [];
+    const created = [], outside = new Element("outside"), messages = [];
     outside.setAttribute("id", "outside");
     const document = {
         head: new Element("global-head"), body: new Element("global-body"), documentElement: new Element("global-html"),
-        getElementById(id) { return id === "lanhuMount" ? mount : id === "outside" ? outside : null; },
-        createElement(tag) { assert.equal(this, document); return new Element(tag); },
+        getElementById(id) { return id === "outside" ? outside : null; },
+        createElement(tag) { assert.equal(this, document); const element = new Element(tag); created.push(element); return element; },
         createTextNode(text) { assert.equal(this, document); return { textContent: text }; }
     };
     const window = new Element("window");
@@ -69,10 +68,10 @@ function fixture(overrides = {}) {
         }, ...overrides
     };
     const host = createLanhuHost(args);
-    return { host, args, state, home, vm, mount, outside, document, window, messages, nativeRequire, photoshop };
+    return { host, args, state, home, vm, get root() { return created[0]; }, outside, document, window, messages, nativeRequire, photoshop };
 }
 
-test("Lanhu factory mounts once in a shadow root and scopes document/window without exposing VM globally", async () => {
+test("Lanhu factory initializes once in a detached root and scopes document/window without exposing VM globally", async () => {
     const env = fixture();
     assert.deepEqual(env.host.status(), { connected: false, uploading: false, projectId: null, loggedIn: false });
     assert.deepEqual(await env.host.connect(), { connected: true, uploading: false, projectId: PROJECT, loggedIn: true });
@@ -83,9 +82,9 @@ test("Lanhu factory mounts once in a shadow root and scopes document/window with
     assert.notEqual(context.require, env.nativeRequire);
     assert.equal(context.require("other"), env.nativeRequire("other"));
     assert.equal(context.require("photoshop").core, env.photoshop.core);
-    assert.equal(context.document.head, env.mount.shadowRoot);
+    assert.equal(context.document.head, env.root);
     assert.notEqual(context.document.body, env.document.body);
-    assert.equal(context.document.querySelector("head"), env.mount.shadowRoot);
+    assert.equal(context.document.querySelector("head"), env.root);
     assert.equal(context.document.querySelector("body"), context.document.body);
     assert.equal(context.document.querySelector("#app"), context.document.getElementById("app"));
     assert.equal(context.document.querySelector("#outside"), null);
@@ -168,17 +167,23 @@ test("Lanhu status remains busy across the asynchronous upload route and follows
     assert.equal(env.host.status().uploading, false);
 });
 
-test("Lanhu host refuses absent shadow support and wraps external error text without leaking credentials", async () => {
-    const noShadow = fixture(); noShadow.mount.attachShadow = undefined;
-    await assert.rejects(noShadow.host.connect(), { code: "LANHU_SHADOW_UNAVAILABLE" });
-    assert.equal(noShadow.state.loads, 0); assert.equal(noShadow.document.head.children.length, 0);
+test("Lanhu host works without Shadow DOM or a page mount and wraps external errors without leaking credentials", async () => {
+    const noShadow = fixture();
+    await noShadow.host.connect();
+    assert.equal(noShadow.state.loads, 1); assert.equal(noShadow.document.head.children.length, 0);
+    assert.equal(noShadow.document.body.children.length, 0);
+    const style = noShadow.document.createElement("style"); style.textContent = "body { color: red; }";
+    noShadow.state.context.document.head.appendChild(style);
+    assert.equal(noShadow.document.head.children.length, 0, "Runtime styles stay detached from the panel.");
+    assert.equal(noShadow.host.openOfficial, undefined);
+    await noShadow.host.destroy();
+    assert.equal(noShadow.root.children.length, 0);
     const env = fixture({ async loadRuntime() {
         const failure = new Error("FAKE_PRIVATE_TOKEN"); failure.code = "LANHU_VENDOR_FAILURE"; throw failure;
     } });
     await assert.rejects(env.host.connect(), failure => failure.code === "LANHU_CONNECT_FAILED" && !failure.message.includes("FAKE_PRIVATE_TOKEN"));
     assert.ok(!JSON.stringify(env.messages).includes("FAKE_PRIVATE_TOKEN"));
-    assert.equal(env.mount.shadowRoot.children.length, 0);
-    await assert.rejects(env.host.openOfficial(), { code: "LANHU_OFFICIAL_OPEN_UNAVAILABLE" });
+    assert.equal(env.root.children.length, 0);
 });
 
 test("Lanhu destroy cleans Vue, scoped listeners and mount and ignores a delayed connect result", async () => {
@@ -186,10 +191,10 @@ test("Lanhu destroy cleans Vue, scoped listeners and mount and ignores a delayed
     const listener = () => {};
     env.state.context.window.addEventListener("resize", listener);
     env.state.context.document.addEventListener("click", listener);
-    assert.equal(env.window.listeners.length, 1); assert.equal(env.mount.shadowRoot.listeners.length, 1);
+    assert.equal(env.window.listeners.length, 1); assert.equal(env.root.listeners.length, 1);
     await env.host.destroy(); await env.host.destroy();
     assert.equal(env.state.destroys, 1); assert.equal(env.window.listeners.length, 0);
-    assert.equal(env.mount.shadowRoot.listeners.length, 0); assert.equal(env.mount.shadowRoot.children.length, 0);
+    assert.equal(env.root.listeners.length, 0); assert.equal(env.root.children.length, 0);
     assert.deepEqual(env.host.status(), { connected: false, uploading: false, projectId: null, loggedIn: false });
     await assert.rejects(env.host.connect(), { code: "LANHU_HOST_DESTROYED" });
     await assert.rejects(env.host.upload(), { code: "LANHU_HOST_DESTROYED" });
@@ -199,7 +204,7 @@ test("Lanhu destroy cleans Vue, scoped listeners and mount and ignores a delayed
     const pending = pendingEnv.host.connect();
     await pendingEnv.host.destroy(); release();
     await assert.rejects(pending, { code: "LANHU_HOST_DESTROYED" });
-    assert.equal(pendingEnv.state.factories, 0); assert.ok(!pendingEnv.mount.shadowRoot || !pendingEnv.mount.shadowRoot.children.length);
+    assert.equal(pendingEnv.state.factories, 0); assert.ok(!pendingEnv.root || !pendingEnv.root.children.length);
 });
 
 test("Lanhu scoped timers and Photoshop notifications clean up without touching parent registrations", async () => {
