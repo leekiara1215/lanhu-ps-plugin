@@ -24,3 +24,9 @@
 - [320px平台浮层预览](/Users/betta/.codex/visualizations/2026/11/18/lanhu-floating-pickers-0612/lanhuDevice-320.png)，为Chrome隔离布局预览。
 
 旧候选保留。本轮未安装、上传或修改PSD。后续宿主验收需加载上述新manifest，检查六菜单展开、底部向上、主滚动跟随/越界关闭、输入层恢复、主/子页签与键盘切换；不要将旧0.6.11加载状态视为本轮通过。
+
+## 后续宿主加载补记
+
+用户随后明确要求将0.6.12加载到Photoshop。已通过UXP Developer Tools卸载0.6.11、移除旧目录的工作区注册，添加上述0.6.12 staging manifest并执行Load。实际界面显示插件名“资源创作与蓝湖 · 0.6.12（隔离试用）”、状态 `Loaded`，并提示 `Plugin Load Successful`。旧候选磁盘目录保留。
+
+此补记更新前述“尚未重新加载”的交付时状态；只确认新版实际加载成功，没有执行菜单交互、上传、切图、PSD写入或完整宿主布局验收。
