@@ -799,7 +799,9 @@ test("primary action failure rolls back pixels and XMP in one history step and p
     env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
     env.state.failXmpWrite = true;
     await env.click("primaryAction");
-    assert.match(env.elements.status.textContent, /injected XMP write failure/);
+    assert.match(env.elements.status.textContent, /操作未完成/);
+    assert.doesNotMatch(env.elements.status.textContent, /injected XMP write failure/);
+    assert.match(env.elements.errorDetails.textContent, /injected XMP write failure/);
     assert.match(env.elements.status.textContent, /显式引用恢复/);
     assert.equal(await env.metadata(), null);
     assert.deepEqual(env.layer.boundsNoEffects, bounds); assert.deepEqual(env.layer.pixelData, raw);
@@ -1089,6 +1091,18 @@ test("official upload progress blocks authoring writes and a failed Lanhu connec
     assert.equal(env.state.history.length, 0); assert.equal(await env.metadata(), null);
     state.connected = false; state.uploading = false;
     await env.click("connectLanhu");
-    assert.match(env.elements.lanhuStatus.textContent, /controlled connection failure/);
+    assert.match(env.elements.lanhuStatus.textContent, /操作未完成/);
+    assert.match(env.elements.errorDetails.textContent, /controlled connection failure/);
     assert.equal(env.elements.authoringUploadLanhu.disabled, true);
+});
+
+test("panel reports supported-layer failures in Chinese and retains original diagnostics without changing metadata", async () => {
+    const env = await panelHarness();
+    env.layer.kind = "text";
+    await env.click("primaryAction");
+    assert.match(env.elements.status.textContent, /仅支持普通像素层/);
+    assert.doesNotMatch(env.elements.status.textContent, /Only ordinary/);
+    assert.match(env.elements.errorDetails.textContent, /Only ordinary pixel layers/);
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined);
+    assert.equal(env.state.imagingCalls.length, 0);
 });

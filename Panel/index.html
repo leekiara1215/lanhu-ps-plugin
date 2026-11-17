@@ -2,7 +2,7 @@
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作</button>
+<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.1</button>
 <button id="tabLanhu" type="button" role="tab" aria-selected="false" aria-controls="lanhuPane">蓝湖工具</button>
 </div>
 <div id="panelViewport"><div class="panel-content">
@@ -18,7 +18,7 @@
 <label>新资源名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
 <p>首次新建填写；引用现有资源自动继承。高级发布新版本时也使用以下设置。</p>
 <div class="row"><label>源边框 L<input id="left" type="number" min="0" value="0"></label><label>T<input id="top" type="number" min="0" value="0"></label><label>R<input id="right" type="number" min="0" value="0"></label><label>B<input id="bottom" type="number" min="0" value="0"></label></div>
-<label>采样<select id="sampling"><option value="Point">Point</option><option value="Bilinear" selected>Bilinear</option></select></label>
+<label>采样<select id="sampling"><option value="Point">点采样（Point）</option><option value="Bilinear" selected>双线性（Bilinear）</option></select></label>
 <p>源透明留白：显式补在选层非空边界外，单位为源像素。默认 0 按非空边界采集，不猜原画布。</p>
 <div class="row"><label>留白 L<input id="padLeft" type="number" min="0" value="0"></label><label>T<input id="padTop" type="number" min="0" value="0"></label><label>R<input id="padRight" type="number" min="0" value="0"></label><label>B<input id="padBottom" type="number" min="0" value="0"></label></div>
 </div>
@@ -53,6 +53,7 @@
 <section><button id="import">导入目录 JSON</button><button id="export">导出目录 JSON</button>
 <p>目录自动维护快照 / 版本；引用只取选定资源，不复制整个库。</p></section>
 <div id="issues"></div>
+<p>最近一次操作的原始诊断（供排查）：</p><pre id="errorDetails"></pre>
 <p class="panel-end">已到高级操作底部</p>
 </div>
 </div>

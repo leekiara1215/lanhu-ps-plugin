@@ -70,14 +70,14 @@ async function connectLanhu() {
     lanhuBusy = true; updateLanhuControls();
     try {
         await lanhuHost.connect(); $("lanhuSetup").style.display = "none";
-    } catch (error) { lanhuMessage(error.message); }
+    } catch (error) { lanhuMessage(errorText(error)); }
     finally { lanhuBusy = false; updateLanhuControls(); }
 }
 async function uploadLanhu() {
     if (busy || lanhuBusy) return;
     lanhuBusy = true; updateLanhuControls();
     try { await lanhuHost.upload(); if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); }
-    catch (error) { if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); lanhuMessage(error.message); }
+    catch (error) { if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); lanhuMessage(errorText(error)); }
     finally { lanhuBusy = false; updateLanhuControls(); }
 }
 $("tabAuthoring").addEventListener("click", () => showTab("authoring"));
@@ -99,7 +99,7 @@ $("openLanhuOfficial").addEventListener("click", async () => {
         const plugin = Array.from(await uxp.pluginManager.getPlugins()).find(item => item.id === "com.lanhu.ps");
         if (!plugin) throw new Error("没有找到已安装的官方蓝湖插件。");
         await plugin.showPanel("showlanhu");
-    } catch (error) { lanhuMessage(error.message); }
+    } catch (error) { lanhuMessage(errorText(error)); }
 });
 showTab("authoring");
 
@@ -107,6 +107,33 @@ function displayText(value) {
     return String(value).replace(/[A-Za-z0-9._@:/-]{24,}/g, token => token.match(/.{1,20}/g).join("\n"));
 }
 function status(message) { $("status").textContent = displayText(message); }
+function errorText(error) {
+    const original = String(error && error.message || error);
+    $("errorDetails").textContent = displayText((error && error.code ? "错误码：" + error.code + "\n" : "") + original);
+    if (/^[\u3400-\u9fff]/.test(original)) return original;
+    const translations = [
+        [/Open a PSD and select exactly one pixel layer/i, "请打开 PSD，并只选择一个普通像素图层。"],
+        [/Only ordinary pixel layers|Masks, styles, advanced blending/i, "仅支持普通像素层；请在独立副本中明确栅格化或合并样式、蒙版、智能对象等内容。"],
+        [/8-bit RGB document|already using sRGB/i, "仅支持已使用 sRGB IEC61966-2.1 的八位 RGB 文档；请先在独立副本中转换。"],
+        [/visible layers and parents/i, "请确保图层及父层可见、不透明度与填充均为百分之百、使用正常混合且无剪贴关系。"],
+        [/descriptor unavailable/i, "无法读取图层外观信息，请重新选择受支持的普通像素层后重试。"],
+        [/readback differs|readback mismatch/i, "写入后回读不一致，操作未完成；请保留原稿并重新检查后重试。"],
+        [/bounds differ from the recorded target/i, "图层内容范围与已登记目标不一致，请通过面板重新应用目标尺寸。"],
+        [/Immutable assetRef conflict/i, "同一资源版本的内容发生冲突；请发布新版本，不要覆盖或合并旧资源。"],
+        [/snapshot is missing|legacy resource needs a source snapshot|requires its original source snapshot/i, "缺少原始源快照，请从原始源图层重新定义或导入有效备份，不要从拉伸效果图反推。"],
+        [/positive integer dimensions|pixel limit/i, "宽高必须为正整数，源图或预览总像素不得超过 4,194,304。"],
+        [/padding must be nonnegative|bounds must be nonempty integer/i, "源图边界须为非空整数像素，透明留白须为非负整数。"],
+        [/Unknown required capability|Unsupported.*version/i, "元数据版本或必需能力不受支持；请使用兼容面板或恢复有效备份，不要覆盖现有数据。"],
+        [/Duplicate or missing nodeId|Document and artboard identities/i, "文档或图层身份缺失或重复，请在高级操作中检查并显式修复身份。"],
+        [/PNG|snapshot.*checksum|snapshot.*block|snapshot.*filter/i, "源图快照无效或不兼容，请保留原文件并导入有效备份，或从原始源图层重新定义。"],
+        [/Target canvas|Target content bounds/i, "实例目标画布记录无效，请检查完整尺寸和内容范围并重新应用目标尺寸。"]
+    ];
+    const found = translations.find(([pattern]) => pattern.test(original));
+    const suffixAt = original.search(/[\u3400-\u9fff]/);
+    const suffix = suffixAt > 0 ? "\n" + original.slice(suffixAt) : "";
+    return (found ? found[1] : "操作未完成，请在高级操作中查看原始诊断，检查文档和图层后重试。") + suffix;
+}
+function samplingText(asset) { return asset.sampling && asset.sampling.filterMode === "Point" ? "点采样（Point）" : "双线性（Bilinear）"; }
 function options() {
     return { displayName: $("displayName").value, filterMode: $("sampling").value,
         nineSlice: { left: Number($("left").value), top: Number($("top").value),
@@ -142,7 +169,7 @@ function updateMode() {
     $("inheritedContract").style.display = asset ? "block" : "none";
     $("inheritedContract").textContent = asset ? "自动继承：源 " + asset.sourceSize.width + "×" + asset.sourceSize.height +
         "，L/T/R/B " + [asset.nineSlice.left, asset.nineSlice.top, asset.nineSlice.right, asset.nineSlice.bottom].join("/") +
-        "，" + (asset.sampling ? asset.sampling.filterMode : "Bilinear") : "";
+        "，" + samplingText(asset) : "";
     $("primaryAction").textContent = asset ? "引用资源并应用到选层" : "创建资源并应用到选层";
 }
 function renderResources(preferred, syncFields = true, pending) {
@@ -251,7 +278,14 @@ function renderIssues(issues) {
     $("issues").textContent = "";
     for (const issue of issues) {
         const row = document.createElement("div"); row.className = "issue";
-        const label = document.createElement("span"); label.textContent = displayText(issue.message); row.appendChild(label);
+        const issueMessages = {
+            UNBOUND: "尚未绑定资源或来自原生复制，请显式选择资源，面板不会猜测来源。",
+            MISSING_LAYER: "原图层已不存在，请确认后显式移除失效绑定。",
+            MISSING_SOURCE: "缺少原始源快照，请选择原始源图层重新定义，或导入有效备份。"
+        };
+        const label = document.createElement("span");
+        label.textContent = displayText("图层 " + issue.layerId + "：" + (issueMessages[issue.code] || "请检查图层与资源绑定。"));
+        row.appendChild(label);
         if (issue.layerId && issue.code !== "MISSING_LAYER") {
             const button = document.createElement("button"); button.textContent = "定位";
             button.addEventListener("click", () => run(() => modal("定位检查图层", doc => store.locateLayer(doc.id, issue.layerId))));
@@ -349,7 +383,7 @@ async function run(action) {
     busy = true;
     for (const button of document.querySelectorAll("button")) button.disabled = true;
     try { const result = await action(); if (action !== refresh) await refresh(); if (typeof result === "string") status(result); }
-    catch (error) { status(String(error.message || error)); }
+    catch (error) { status(errorText(error)); }
     finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; updateLanhuControls(); }
 }
 function bind(id, action) {
@@ -535,13 +569,13 @@ async function onSelectionEvent() {
     if (destroyed || busy || catalogLoading) return;
     try {
         if (currentSelectionKey() !== selectionIdentity) await run(refresh);
-    } catch (error) { status("自动选择刷新失败，请使用高级刷新 / 检查：" + error.message); }
+    } catch (error) { status("自动选择刷新失败，请使用高级刷新 / 检查：" + errorText(error)); }
 }
 async function registerSelectionEvents() {
     try {
         await ps.action.addNotificationListener(selectionEvents, onSelectionEvent);
         listenerRegistered = true;
-    } catch (error) { notificationFailure = error.message; }
+    } catch (error) { notificationFailure = errorText(error); }
 }
 uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy() {
     destroyed = true;
@@ -562,7 +596,7 @@ uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy
         await run(refresh);
         if (notificationFailure) status("自动选择刷新不可用，请使用高级操作中的刷新 / 检查：" + notificationFailure);
     } catch (error) {
-        if (catalogLoading || catalogFailure) { catalogLoading = false; catalogFailure = error.message; status("目录检查失败，已阻止覆盖：" + error.message); }
-        else status("PSD 检查失败：" + error.message);
+        if (catalogLoading || catalogFailure) { catalogLoading = false; catalogFailure = errorText(error); status("目录检查失败，已阻止覆盖：" + catalogFailure); }
+        else status("PSD 检查失败：" + errorText(error));
     }
 })();
