@@ -415,7 +415,8 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         env.state.notificationEvents = Array.from(events); notification = callback;
     };
     env.photoshop.action.removeNotificationListener = async (events, callback) => {
-        assert.equal(callback, notification); assert.deepEqual(Array.from(events), env.state.notificationEvents); notification = null;
+        assert.equal(callback, notification); assert.deepEqual(Array.from(events), env.state.notificationEvents);
+        env.state.notificationRemoveCalls = (env.state.notificationRemoveCalls || 0) + 1; notification = null;
     };
     const file = { name: "gameui-resource-catalog.json", text: catalogText,
         async write(value) { this.text = value; }, async read() { return this.text; } };
@@ -425,7 +426,12 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     const entrypoints = {};
     if (startup.noDocument) { env.photoshop.app.activeDocument = null; env.photoshop.app.documents = []; }
     const uxp = { entrypoints: { setup(value) {
+        if (startup.omitPluginCreate) delete value.plugin.create;
+        if (value.plugin && typeof value.plugin === "object" && typeof value.plugin.create !== "function") {
+            throw new Error("create method is not defined for plugin.");
+        }
         entrypoints.value = value;
+        if (value.plugin) { value.plugin.create(); env.state.pluginCreateCalls = (env.state.pluginCreateCalls || 0) + 1; }
         if (startup.showDuringSetup) value.panels.gameuiAuthoring.show();
     } }, storage: { localFileSystem: { async getDataFolder() { await catalogReady; return folder; },
         async getFileForOpening() { return { async read() { return JSON.stringify(startup.importDirectory || author.directory(fixture().metadata)); } }; } } } };
@@ -862,4 +868,18 @@ test("selection notifications skip while the primary action is busy and bound la
     env.doc.activeLayers = [env.layer]; await env.notify("select");
     assert.equal(env.elements.resources.value, ref); assert.equal(env.elements.targetWidth.value, "128");
     assert.equal(env.elements.targetHeight.value, "80");
+});
+
+test("plugin lifecycle registration rejects missing create and starts with create plus destroy cleanup", async () => {
+    await assert.rejects(panelHarness(undefined, undefined, { omitPluginCreate: true }), /create method is not defined for plugin/);
+    const env = await panelHarness(undefined, undefined, { showDuringSetup: true });
+    assert.equal(env.state.pluginCreateCalls, 1);
+    assert.match(env.elements.selection.textContent, /IsolatedPanelTest/);
+    assert.match(env.elements.status.textContent, /主按钮会自动初始化/);
+    assert.deepEqual(env.state.notificationEvents, ["select", "open", "close"]);
+    await env.entrypoints.value.plugin.destroy();
+    assert.equal(env.state.notificationRemoveCalls, 1);
+    env.photoshop.app.activeDocument = null; env.photoshop.app.documents = [];
+    await env.notify("close");
+    assert.match(env.elements.selection.textContent, /IsolatedPanelTest/, "Destroy must detach the selection callback.");
 });

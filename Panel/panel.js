@@ -410,7 +410,7 @@ async function registerSelectionEvents() {
         listenerRegistered = true;
     } catch (error) { notificationFailure = error.message; }
 }
-uxp.entrypoints.setup({ plugin: { async destroy() {
+uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy() {
     destroyed = true;
     if (listenerRegistered) await ps.action.removeNotificationListener(selectionEvents, onSelectionEvent);
 } }, panels: { gameuiAuthoring: { show() { if (!busy) run(refresh); } } } });
