@@ -2,11 +2,15 @@
 
 日期：2026-11-17。独立仓已建立为开发源；当前 Framework 集成来源为 `e75e5263a309f91da13e80f6ca4795cefba942a8`。
 状态：已有实际 PS 面板、落盘重开和适配器生命周期证据，**新面板两稿的云端到 Unity 闭环与正式推广仍未通过**。
-本页只读取已有证据，不声称本次迁移重新运行了 PS、安装或 Unity。
+本页区分历史迁移与后续主流程集成；0.5.0 只取得新版加载证据，未重跑 Unity。
 
 主证据目录为 [/Users/betta/.codex/visualizations/2026/11/17/01a1e7c5-ba46-7533-bcc1-580af0395c6a/lanhu-production](/Users/betta/.codex/visualizations/2026/11/17/01a1e7c5-ba46-7533-bcc1-580af0395c6a/lanhu-production)。
 集成总账与历史范围见 [Framework RESULTS.md](/Users/betta/Worktrees/meatloaf_client-feat-lanhu_ui_skill-422718cc/client/Assets/BettaFramework/Scripts/Editor/UI/LanhuDesign/Docs~/Productionization/RESULTS.md)。
 本页下面的资源保存/重开证据是比早期“仅初始化、资源为空”记录更晚的观察，不能把不同阶段的状态混为一个结论。
+
+## 0.5.0 主流程接续
+
+主按钮实现已集成插件 `4034d1f` 与 Framework `b8ddb3e`；定点 10/10 通过，新候选在 UDT 实际 Loaded / Plugin Load Successful。默认自动初始化、明确新建/引用并应用，常用操作一次按钮后正常 Cmd+S；原维修等入口在高级操作。真实主按钮与跨稿同 ref 尚待点按和落盘核验，历史两个 ref 不自动合并。完整来源、包哈希与测试见 [集成记录](SYNC-20261117-PRIMARY.md)。当前上传适配器仍为已观察的增强 0.4.4，最终恢复未执行。
 
 ## 已观察的面板与保存行为
 
