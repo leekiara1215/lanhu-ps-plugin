@@ -24,6 +24,8 @@ node Panel/build-panel.cjs /absolute/new-or-empty/staging/GameUIAuthoring
 
 使用Adobe Photoshop API2 `action.addNotificationListener(["select","open","close"], callback)`，只在文档/图层身份改变时刷新；忙碌或加载中跳过，同一选层内的输入不会被通知重置。销毁插件时移除同一监听；API注册失败会提示使用高级刷新，不轮询。实际宿主事件时序仍由负责人验收。[官方API](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/media/photoshopaction)、[事件名](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/media/eventcodes)。
 
+异步读取 XMP / 检查文档身份期间若继续切层、切文档或关闭文档，刷新会丢弃旧选层的结果并读取最新选择，再更新界面。读取期间在当前选层编辑的目标宽高、资源设置及明确选择的“新建 / 已有资源”会保留；未编辑的字段仍接收该实例默认值。插件销毁后不呈现未完成的读取结果。这些时序保护已有离线回归，仍需真实面板验收；不据此宣称原生资源菜单的可见性问题已解决。
+
 主按钮将自动初始化、创建/引用、像素应用及XMP写入置于一次modal history；失败请求回滚PSD像素与XMP。未知schema/必需能力、损坏XMP或身份冲突仍严格阻止，不覆盖已有标记。目录沿用先存源后写XMP：后续XMP失败最多留下合法未使用条目，面板保留原错误并提示可显式引用恢复，不回写或删除可能被外部更新的目录。
 
 ## 支持边界

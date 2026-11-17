@@ -18,6 +18,9 @@ let advancedOpen = false;
 let listenerRegistered = false;
 let notificationFailure = null;
 let destroyed = false;
+let editRevision = 0;
+let resourceChoice = null;
+const fieldEdits = new Map();
 const selectionEvents = ["select", "open", "close"];
 
 function displayText(value) {
@@ -34,17 +37,21 @@ function resource() {
     if (!ref || !catalog.assets[ref]) throw new Error("请先选择资源版本。");
     return ref;
 }
-function assetFields() {
+function defaultField(id, value, pending) {
+    const edit = fieldEdits.get(id);
+    if (!pending || !edit || edit.key !== pending.key || edit.revision <= pending.revision) $(id).value = value;
+}
+function assetFields(pending) {
     const asset = catalog.assets[$("resources").value];
     if (!asset) {
         $("identityInfo").textContent = "新建公共资源；内部引用与版本由工具自动维护。";
         $("resourceInfo").textContent = "";
         updateMode(); return;
     }
-    $("displayName").value = asset.displayName || asset.assetKey || "";
+    defaultField("displayName", asset.displayName || asset.assetKey || "", pending);
     $("identityInfo").textContent = displayText("诊断引用（工具维护）：\n" + $("resources").value);
-    for (const side of ["left", "top", "right", "bottom"]) $(side).value = String(asset.nineSlice[side]);
-    $("sampling").value = asset.sampling ? asset.sampling.filterMode : "Bilinear";
+    for (const side of ["left", "top", "right", "bottom"]) defaultField(side, String(asset.nineSlice[side]), pending);
+    defaultField("sampling", asset.sampling ? asset.sampling.filterMode : "Bilinear", pending);
     $("sampling").setAttribute("value", $("sampling").value);
     $("resourceInfo").textContent = displayText($("resources").value) + "\n" + asset.sourceSize.width + "×" + asset.sourceSize.height + " 源像素";
     updateMode();
@@ -58,7 +65,7 @@ function updateMode() {
         "，" + (asset.sampling ? asset.sampling.filterMode : "Bilinear") : "";
     $("primaryAction").textContent = asset ? "引用资源并应用到选层" : "创建资源并应用到选层";
 }
-function renderResources(preferred, syncFields = true) {
+function renderResources(preferred, syncFields = true, pending) {
     const select = $("resources");
     const prior = preferred === undefined ? explicitResourceRef || "" : preferred;
     select.textContent = "";
@@ -77,7 +84,7 @@ function renderResources(preferred, syncFields = true) {
     }
     const selected = catalog.assets[prior] ? prior : "";
     select.value = selected; select.setAttribute("value", selected);
-    if (syncFields || renderedRef !== selected) assetFields();
+    if (syncFields || renderedRef !== selected) assetFields(pending);
     else updateMode();
     renderedRef = selected;
 }
@@ -166,14 +173,14 @@ function currentSelectionKey() {
     const doc = ps.app.activeDocument;
     return doc ? doc.id + ":" + Array.from(doc.activeLayers).map(layer => layer.id).sort().join(",") : "none";
 }
-function targetDefaults(value, selected) {
+function targetDefaults(value, selected, pending) {
     if (!selected) return;
     const marker = value && value.nodes[selected.id];
     const target = marker && value.authoring && value.authoring.targets && value.authoring.targets[marker.nodeId];
     const b = selected.boundsNoEffects;
     const width = target ? target.width : b.right - b.left, height = target ? target.height : b.bottom - b.top;
     if (Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0) {
-        $("targetWidth").value = String(width); $("targetHeight").value = String(height);
+        defaultField("targetWidth", String(width), pending); defaultField("targetHeight", String(height), pending);
     }
     $("targetHint").textContent = target ? "默认使用该实例已登记的完整目标画布；可直接修改宽高。" :
         "默认取当前选层整数非空边界；透明外沿不推测，需要时填写完整目标画布尺寸。";
@@ -181,41 +188,63 @@ function targetDefaults(value, selected) {
 async function refresh() {
     if (catalogLoading) { status("目录正在加载，请稍候。"); return; }
     if (catalogFailure) throw new Error("本地目录不可读，已阻止覆盖：" + catalogFailure + "。请显式导入备份目录恢复。");
-    const key = currentSelectionKey(), changed = key !== selectionIdentity;
-    selectionIdentity = key;
-    const doc = ps.app.activeDocument;
-    if (!doc) { $("selection").textContent = "请打开 PSD"; renderResources(undefined, false); renderIssues([]); status("请先打开 PSD；图层切换后会自动刷新。"); return; }
-    const selected = doc.activeLayers.length === 1 ? doc.activeLayers[0] : null;
-    $("selection").textContent = displayText(doc.name + "\n" + (selected ? selected.name + " [" + selected.id + "]" : "请选择一个像素层"));
-    const value = (await store.readMetadata(doc.id)).metadata;
-    if (value) {
-        author.validateMetadata(value);
-        await collision(doc, value);
-        const portable = JSON.parse(JSON.stringify(value)); portable.nodes = {};
-        if (portable.authoring) delete portable.authoring.targets;
-        for (const ref of Object.keys(portable.assets)) {
-            if (!portable.authoring || !portable.authoring.sources[ref]) delete portable.assets[ref];
+    const revision = editRevision;
+    // Notifications can arrive while XMP/collision reads are pending. Retry the latest
+    // selection before committing any defaults, even when its notification was skipped as busy.
+    while (!destroyed) {
+        const key = currentSelectionKey(), pending = { key, revision };
+        const doc = ps.app.activeDocument;
+        if (!doc) {
+            selectionIdentity = key; lastBoundRef = null;
+            $("selection").textContent = "请打开 PSD"; renderResources(undefined, false); renderIssues([]);
+            status("请先打开 PSD；图层切换后会自动刷新。"); return;
         }
-        catalog = author.importDirectory(catalog, portable);
+        const selected = doc.activeLayers.length === 1 ? doc.activeLayers[0] : null;
+        let value;
+        try {
+            value = (await store.readMetadata(doc.id)).metadata;
+            if (destroyed) return;
+            if (key !== currentSelectionKey()) continue;
+            if (value) { author.validateMetadata(value); await collision(doc, value); }
+        } catch (error) {
+            if (destroyed) return;
+            if (key !== currentSelectionKey()) continue;
+            throw error;
+        }
+        if (destroyed) return;
+        if (key !== currentSelectionKey()) continue;
+        if (value) {
+            const portable = JSON.parse(JSON.stringify(value)); portable.nodes = {};
+            if (portable.authoring) delete portable.authoring.targets;
+            for (const ref of Object.keys(portable.assets)) {
+                if (!portable.authoring || !portable.authoring.sources[ref]) delete portable.assets[ref];
+            }
+            catalog = author.importDirectory(catalog, portable);
+        }
+        const changed = key !== selectionIdentity;
+        selectionIdentity = key;
+        $("selection").textContent = displayText(doc.name + "\n" + (selected ? selected.name + " [" + selected.id + "]" : "请选择一个像素层"));
+        const marker = selected && value && value.nodes[selected.id];
+        const boundRef = marker ? marker.assetRef : null;
+        const chosenWhilePending = resourceChoice && resourceChoice.key === key && resourceChoice.revision > revision;
+        if (boundRef && (changed || lastBoundRef !== boundRef) && !chosenWhilePending) explicitResourceRef = boundRef;
+        lastBoundRef = boundRef;
+        renderResources(explicitResourceRef || "", changed, pending);
+        if (changed) targetDefaults(value, selected, pending);
+        if (!value) { renderIssues([]); status("当前 PSD 未初始化；主按钮会自动初始化并创建 / 引用资源。完成后 Cmd+S 保存。"); return; }
+        const leaves = store.flattenLayers(doc.layers).filter(layer => !layer.layers || !layer.layers.length);
+        const issues = author.inspect(value, leaves);
+        renderIssues(issues);
+        status(issues.length ? issues.length + " 项待处理；未绑定层不会猜绑。可使用主按钮处理选层，其余检查见高级操作。" : "身份和资源契约检查通过。请随 PSD 保存。");
+        return;
     }
-    const marker = selected && value && value.nodes[selected.id];
-    const boundRef = marker ? marker.assetRef : null;
-    if (boundRef && (changed || lastBoundRef !== boundRef)) explicitResourceRef = boundRef;
-    lastBoundRef = boundRef;
-    renderResources(explicitResourceRef || "", changed);
-    if (changed) targetDefaults(value, selected);
-    if (!value) { renderIssues([]); status("当前 PSD 未初始化；主按钮会自动初始化并创建 / 引用资源。完成后 Cmd+S 保存。"); return; }
-    const leaves = store.flattenLayers(doc.layers).filter(layer => !layer.layers || !layer.layers.length);
-    const issues = author.inspect(value, leaves);
-    renderIssues(issues);
-    status(issues.length ? issues.length + " 项待处理；未绑定层不会猜绑。可使用主按钮处理选层，其余检查见高级操作。" : "身份和资源契约检查通过。请随 PSD 保存。");
 }
 
 async function run(action) {
     if (busy) return;
     busy = true;
     for (const button of document.querySelectorAll("button")) button.disabled = true;
-    try { const result = await action(); await refresh(); if (typeof result === "string") status(result); }
+    try { const result = await action(); if (action !== refresh) await refresh(); if (typeof result === "string") status(result); }
     catch (error) { status(String(error.message || error)); }
     finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; }
 }
@@ -394,10 +423,16 @@ bind("export", async () => {
     if (await file.read() !== text) throw new Error("导出目录回读不一致。");
 });
 $("resources").addEventListener("change", () => {
+    resourceChoice = { key: currentSelectionKey(), revision: ++editRevision };
     explicitResourceRef = $("resources").value || "";
     if (!explicitResourceRef) $("displayName").value = "";
     assetFields(); renderedRef = explicitResourceRef;
 });
+for (const id of ["displayName", "left", "top", "right", "bottom", "sampling", "targetWidth", "targetHeight"]) {
+    const edited = () => fieldEdits.set(id, { key: currentSelectionKey(), revision: ++editRevision });
+    $(id).addEventListener("input", edited);
+    $(id).addEventListener("change", edited);
+}
 async function onSelectionEvent() {
     if (destroyed || busy || catalogLoading) return;
     try {
@@ -425,7 +460,7 @@ uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy
         catalogFailure = null;
         catalogLoading = false;
         await registerSelectionEvents();
-        await refresh();
+        await run(refresh);
         if (notificationFailure) status("自动选择刷新不可用，请使用高级操作中的刷新 / 检查：" + notificationFailure);
     } catch (error) {
         if (catalogLoading || catalogFailure) { catalogLoading = false; catalogFailure = error.message; status("目录检查失败，已阻止覆盖：" + error.message); }

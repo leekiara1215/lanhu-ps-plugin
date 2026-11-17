@@ -883,3 +883,96 @@ test("plugin lifecycle registration rejects missing create and starts with creat
     await env.notify("close");
     assert.match(env.elements.selection.textContent, /IsolatedPanelTest/, "Destroy must detach the selection callback.");
 });
+
+function pauseMetadataReads(env, count) {
+    const original = env.store.readMetadata;
+    const reads = Array.from({ length: count }, () => {
+        let arrived, release;
+        return { arrived: new Promise(resolve => { arrived = resolve; }),
+            gate: new Promise(resolve => { release = resolve; }),
+            signal: () => arrived(), release: () => release() };
+    });
+    let index = 0;
+    env.store.readMetadata = async id => {
+        const packet = await original(id), read = reads[index++];
+        if (read) { read.signal(); await read.gate; }
+        return packet;
+    };
+    return reads;
+}
+
+test("selection refresh preserves edited fields while untouched fields inherit the bound resource", async () => {
+    const { metadata } = fixture();
+    const value = author.copyNode(metadata, 10, 20);
+    const env = await panelHarness(JSON.stringify(author.directory(value)), value);
+    const other = { ...env.layer, id: 20, name: "other-bound-layer" };
+    env.doc.layers.push(other); env.doc.activeLayers = [other];
+    const [read] = pauseMetadataReads(env, 1);
+    const pending = env.notify(); await read.arrived;
+    env.elements.targetWidth.value = "123";
+    env.elements.targetWidth.listeners.input?.();
+    env.elements.displayName.value = "尚未发布的名称";
+    env.elements.displayName.listeners.input?.();
+    env.elements.left.value = "2"; env.elements.left.listeners.change?.();
+    env.elements.sampling.value = "Bilinear"; env.elements.sampling.listeners.change?.();
+    read.release(); await pending;
+    assert.equal(env.elements.targetWidth.value, "123");
+    assert.equal(env.elements.targetHeight.value, "5", "Untouched fields still receive the selected instance defaults.");
+    assert.equal(env.elements.resources.value, value.nodes[20].assetRef);
+    assert.equal(env.elements.displayName.value, "尚未发布的名称");
+    assert.equal(env.elements.left.value, "2"); assert.equal(env.elements.sampling.value, "Bilinear");
+    assert.equal(env.elements.right.value, String(value.assets[value.nodes[20].assetRef].nineSlice.right));
+    assert.deepEqual(await env.metadata(), value);
+    assert.equal(env.file.text, JSON.stringify(author.directory(value)));
+});
+
+test("selection refresh preserves an explicit new-resource choice made while XMP is pending", async () => {
+    const { metadata } = fixture();
+    const value = author.copyNode(metadata, 10, 20);
+    const env = await panelHarness(JSON.stringify(author.directory(value)), value);
+    const other = { ...env.layer, id: 20, name: "other-bound-layer" };
+    env.doc.layers.push(other); env.doc.activeLayers = [other];
+    const [read] = pauseMetadataReads(env, 1);
+    const pending = env.notify(); await read.arrived;
+    env.elements.resources.value = ""; env.elements.resources.listeners.change();
+    env.elements.displayName.value = "新资源草稿"; env.elements.displayName.listeners.input?.();
+    read.release(); await pending;
+    assert.equal(env.elements.resources.value, "");
+    assert.equal(env.elements.displayName.value, "新资源草稿");
+    assert.equal(env.elements.newResourceSettings.style.display, "block");
+    assert.deepEqual(await env.metadata(), value);
+});
+
+test("selection refresh catches consecutive changes during XMP reads without waiting for another notification", async () => {
+    const env = await panelHarness();
+    const layers = [20, 30, 40].map(id => ({ ...env.layer, id, name: "layer-" + id,
+        boundsNoEffects: { left: 0, top: 0, right: id, bottom: id + 1 } }));
+    env.doc.layers.push(...layers); env.doc.activeLayers = [layers[0]];
+    const [first, second] = pauseMetadataReads(env, 2);
+    const pending = env.notify(); await first.arrived;
+    env.doc.activeLayers = [layers[1]]; await env.notify(); first.release();
+    await second.arrived;
+    env.doc.activeLayers = [layers[2]]; await env.notify(); second.release();
+    await pending;
+    assert.match(env.elements.selection.textContent, /layer-40/);
+    assert.equal(env.elements.targetWidth.value, "40");
+    assert.equal(env.elements.targetHeight.value, "41");
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined);
+    assert.equal(env.state.history.length, 0);
+});
+
+test("selection refresh handles closing the document and ignores pending results after destroy", async () => {
+    for (const destroy of [false, true]) {
+        const env = await panelHarness();
+        const [read] = pauseMetadataReads(env, 1);
+        const pending = env.click("refresh"); await read.arrived;
+        const before = env.elements.selection.textContent;
+        env.photoshop.app.activeDocument = null; env.photoshop.app.documents = [];
+        if (destroy) await env.entrypoints.value.plugin.destroy();
+        else await env.notify("close");
+        read.release(); await pending;
+        assert.equal(env.elements.selection.textContent, destroy ? before : "请打开 PSD");
+        assert.equal(env.state.history.length, 0);
+        assert.equal(env.file.text, undefined);
+    }
+});
