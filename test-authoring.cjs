@@ -371,6 +371,10 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     for (const match of html.matchAll(/<(\w+)[^>]*id="([^"]+)"[^>]*>/g)) {
         const element = elements[match[2]] = new Element(match[1]);
         const value = match[0].match(/value="([^"]*)"/); if (value) element.value = value[1];
+        for (const attribute of match[0].matchAll(/(class|role|aria-disabled|aria-selected|aria-pressed|tabindex)="([^"]*)"/g)) {
+            element.setAttribute(attribute[1], attribute[2]);
+            if (attribute[1] === "class") element.className = attribute[2];
+        }
     }
     elements.sampling.value = "Bilinear";
     assert.match(html, /option value="Point"/); assert.match(html, /option value="Bilinear"/);
@@ -448,7 +452,7 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
                 for (let i = 0; i < all.length; i++) for (const child of all[i].children) {
                     if (!seen.has(child)) { seen.add(child); all.push(child); }
                 }
-                return all.filter(element => element.tag === tag);
+                return all.filter(element => tag === ".ui-button" ? String(element.className || "").split(/\s+/).includes("ui-button") : element.tag === tag);
             } },
         console, require(name) {
             if (name === "photoshop") return env.photoshop; if (name === "uxp") return uxp;
@@ -1013,7 +1017,7 @@ test("inline resource rows choose the exact last version without writing PSD and
     assert.equal(rows.length, 26);
     assert.equal(rows[0].getAttribute("data-resource-ref"), "");
     assert.equal(env.chosenResource(), "");
-    assert.ok(rows.every(row => row.tag === "button" && row.getAttribute("type") === "button" && !row.disabled));
+    assert.ok(rows.every(row => row.tag === "div" && row.getAttribute("role") === "button" && !row.disabled));
     assert.match(env.elements.resourceCount.textContent, /^25 个资源版本/);
     const lastRef = rows.at(-1).getAttribute("data-resource-ref");
     env.elements.targetWidth.value = "192"; env.elements.targetHeight.value = "96";
@@ -1086,12 +1090,17 @@ test("tool tabs show native controls immediately, preserve inputs and share one 
 
 test("official upload progress blocks authoring writes and a failed Lanhu connection leaves upload disabled", async () => {
     const state = { connected: true, uploading: true, loggedIn: true, projectId: "test" };
-    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => state,
-        async connect() { throw new Error("controlled connection failure"); }, async destroy() {} }) });
+    let changed;
+    const env = await panelHarness(undefined, undefined, { lanhuHost: ({ onChange }) => {
+        changed = onChange;
+        return { status: () => state, async connect() { throw new Error("controlled connection failure"); }, async destroy() {} };
+    } });
     await env.click("primaryAction");
     assert.match(env.elements.status.textContent, /蓝湖上传尚在进行/);
     assert.equal(env.state.history.length, 0); assert.equal(await env.metadata(), null);
+    assert.equal(env.elements.connectLanhu.disabled, true);
     state.connected = false; state.uploading = false;
+    changed();
     await env.click("connectLanhu");
     assert.match(env.elements.lanhuStatus.textContent, /操作未完成/);
     assert.match(env.elements.errorDetails.textContent, /controlled connection failure/);
@@ -1174,4 +1183,27 @@ test("native browser authorization button shares pending and cancel state across
     assert.equal(env.elements.lanhuCancelAuth.style.display, "none");
     assert.ok(calls.includes("browserAuth") && calls.includes("cancelBrowserAuth"));
     assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
+});
+
+test("custom buttons retain mouse and keyboard activation, ARIA and hard disabled gating without PSD writes", async () => {
+    const env = await panelHarness();
+    const button = env.elements.toggleAdvanced;
+    assert.equal(button.tag, "div"); assert.equal(button.getAttribute("role"), "button");
+    assert.equal(button.getAttribute("aria-disabled"), "false"); assert.equal(button.getAttribute("tabindex"), "0");
+    let prevented = 0;
+    const key = (key, repeat = false) => button.listeners.keydown({ key, repeat, preventDefault() { prevented++; } });
+    await key("Enter"); assert.equal(env.elements.advancedPanel.style.display, "block");
+    await key(" "); assert.equal(env.elements.advancedPanel.style.display, "none");
+    await key("Enter", true); assert.equal(env.elements.advancedPanel.style.display, "none");
+    button.disabled = true;
+    assert.equal(button.getAttribute("aria-disabled"), "true"); assert.equal(button.getAttribute("tabindex"), "-1");
+    await env.click("toggleAdvanced"); await key("Enter"); await key(" ");
+    assert.equal(env.elements.advancedPanel.style.display, "none");
+    env.elements.primaryAction.disabled = true;
+    await env.click("primaryAction");
+    await env.elements.primaryAction.listeners.keydown({ key: "Enter", preventDefault() {} });
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
+    button.disabled = false; await env.click("toggleAdvanced"); assert.equal(env.elements.advancedPanel.style.display, "block");
+    assert.equal(prevented, 4);
+    assert.equal(env.elements.tabAuthoring.getAttribute("role"), "tab", "Custom drawing preserves tab semantics.");
 });

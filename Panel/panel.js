@@ -30,6 +30,47 @@ let lanhuHost;
 let activeTab = "authoring";
 let inlineLanhuOpen = false;
 
+// A div avoids the host-painted HTMLButtonElement chrome. Keep the existing
+// disabled property contract, ARIA state and keyboard behavior together.
+function prepareButton(element) {
+    if (element.gameuiButtonReady) return element;
+    element.gameuiButtonReady = true;
+    let disabled = element.getAttribute("aria-disabled") === "true";
+    if (!element.getAttribute("role")) element.setAttribute("role", "button");
+    Object.defineProperty(element, "disabled", {
+        configurable: true,
+        get() { return disabled; },
+        set(value) {
+            disabled = !!value;
+            element.setAttribute("aria-disabled", disabled ? "true" : "false");
+            element.setAttribute("tabindex", disabled ? "-1" : "0");
+        }
+    });
+    element.disabled = disabled;
+    return element;
+}
+function createButton() {
+    const element = document.createElement("div");
+    element.className = "ui-button";
+    prepareButton(element);
+    element.disabled = busy || lanhuBusy;
+    return element;
+}
+function onClick(element, action) {
+    prepareButton(element);
+    const activate = event => {
+        if (destroyed || element.disabled) return;
+        return action(event);
+    };
+    element.addEventListener("click", activate);
+    element.addEventListener("keydown", event => {
+        if (event.repeat || !["Enter", " ", "Spacebar"].includes(event.key)) return;
+        event.preventDefault();
+        return activate(event);
+    });
+}
+for (const element of document.querySelectorAll(".ui-button")) prepareButton(element);
+
 function lanhuMessage(message) {
     if (destroyed) return;
     $("lanhuStatus").textContent = message;
@@ -157,27 +198,27 @@ function openLanhuWorkspace() {
     showTab("lanhu");
     if (!lanhuHost.status().connected) return connectLanhu();
 }
-$("tabAuthoring").addEventListener("click", () => showTab("authoring"));
-$("tabLanhu").addEventListener("click", openLanhuWorkspace);
-$("authoringOpenLanhu").addEventListener("click", openLanhuWorkspace);
-$("authoringToggleLanhu").addEventListener("click", async () => {
+onClick($("tabAuthoring"), () => showTab("authoring"));
+onClick($("tabLanhu"), openLanhuWorkspace);
+onClick($("authoringOpenLanhu"), openLanhuWorkspace);
+onClick($("authoringToggleLanhu"), async () => {
     inlineLanhuOpen = !inlineLanhuOpen;
     $("authoringLanhuInline").style.display = inlineLanhuOpen ? "block" : "none";
     $("authoringToggleLanhu").textContent = inlineLanhuOpen ? "收起本页蓝湖工具" : "在本页展开蓝湖工具";
     positionLanhuMount(); renderLanhuWorkspace();
     if (inlineLanhuOpen && !lanhuHost.status().connected) await connectLanhu();
 });
-$("connectLanhu").addEventListener("click", connectLanhu);
-$("authoringUploadLanhu").addEventListener("click", uploadLanhu);
-$("lanhuUploadAction").addEventListener("click", uploadLanhu);
-$("lanhuLoginAction").addEventListener("click", () => lanhuTask(async () => {
+onClick($("connectLanhu"), connectLanhu);
+onClick($("authoringUploadLanhu"), uploadLanhu);
+onClick($("lanhuUploadAction"), uploadLanhu);
+onClick($("lanhuLoginAction"), () => lanhuTask(async () => {
     const credentials = { account: $("lanhuAccount").value, password: $("lanhuPassword").value };
     $("lanhuPassword").value = "";
     await lanhuHost.perform("login", credentials);
 }));
-$("lanhuLogout").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("logout")));
-$("lanhuBrowserAuth").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("browserAuth")));
-$("lanhuCancelAuth").addEventListener("click", () => lanhuTask(() => lanhuHost.perform("cancelBrowserAuth")));
+onClick($("lanhuLogout"), () => lanhuTask(() => lanhuHost.perform("logout")));
+onClick($("lanhuBrowserAuth"), () => lanhuTask(() => lanhuHost.perform("browserAuth")));
+onClick($("lanhuCancelAuth"), () => lanhuTask(() => lanhuHost.perform("cancelBrowserAuth")));
 for (const [id, action] of [["lanhuTeam", "team"], ["lanhuProject", "project"], ["lanhuGroup", "group"]]) {
     $(id).addEventListener("change", () => { const value = $(id).value; return lanhuTask(() => lanhuHost.perform(action, value)); });
 }
@@ -192,18 +233,18 @@ $("lanhuDevice").addEventListener("change", () => {
     return saveLanhuSettings();
 });
 $("lanhuScale").addEventListener("change", () => saveLanhuSettings());
-$("lanhuBoardsAll").addEventListener("click", () => saveLanhuSettings(1));
-$("lanhuBoardsSelected").addEventListener("click", () => saveLanhuSettings(2));
+onClick($("lanhuBoardsAll"), () => saveLanhuSettings(1));
+onClick($("lanhuBoardsSelected"), () => saveLanhuSettings(2));
 for (const [id, action] of [["lanhuSliceLayer", "sliceWithLayer"], ["lanhuSliceGroup", "sliceWithGroup"], ["lanhuUnslice", "unslice"], ["lanhuShowSlices", "showSlice"], ["lanhuHideSlices", "hiddenSlice"], ["lanhuBack", "back"]]) {
-    $(id).addEventListener("click", () => lanhuTask(() => lanhuHost.perform(action)));
+    onClick($(id), () => lanhuTask(() => lanhuHost.perform(action)));
 }
-for (const name of ["Upload", "Slice"]) $("lanhu" + name + "Tab").addEventListener("click", () => {
+for (const name of ["Upload", "Slice"]) onClick($("lanhu" + name + "Tab"), () => {
     for (const item of ["Upload", "Slice"]) {
         $("lanhu" + item + "View").style.display = item === name ? "block" : "none";
         $("lanhu" + item + "Tab").setAttribute("aria-selected", item === name ? "true" : "false");
     }
 });
-$("openLanhuOfficial").addEventListener("click", async () => {
+onClick($("openLanhuOfficial"), async () => {
     try {
         if (!uxp.pluginManager) throw new Error("当前宿主未提供插件通信，请从增效工具菜单打开蓝湖。");
         const plugin = Array.from(await uxp.pluginManager.getPlugins()).find(item => item.id === "com.lanhu.ps");
@@ -294,12 +335,11 @@ function renderResources(preferred, syncFields = true, pending) {
     if (signature !== resourceChoicesSignature) {
         const list = $("resources"); list.textContent = "";
         for (const choice of choices) {
-            const button = document.createElement("button"); button.className = "resource-choice";
-            button.setAttribute("type", "button");
+            const button = createButton(); button.className = "ui-button resource-choice";
             button.setAttribute("data-resource-ref", choice.ref);
             button.setAttribute("data-resource-label", choice.label);
             button.disabled = busy || catalogLoading || !!catalogFailure;
-            button.addEventListener("click", () => chooseResource(choice.ref));
+            onClick(button, () => chooseResource(choice.ref));
             list.appendChild(button);
         }
         resourceChoicesSignature = signature;
@@ -397,13 +437,13 @@ function renderIssues(issues) {
         label.textContent = displayText("图层 " + issue.layerId + "：" + (issueMessages[issue.code] || "请检查图层与资源绑定。"));
         row.appendChild(label);
         if (issue.layerId && issue.code !== "MISSING_LAYER") {
-            const button = document.createElement("button"); button.textContent = "定位";
-            button.addEventListener("click", () => run(() => modal("定位检查图层", doc => store.locateLayer(doc.id, issue.layerId))));
+            const button = createButton(); button.textContent = "定位";
+            onClick(button, () => run(() => modal("定位检查图层", doc => store.locateLayer(doc.id, issue.layerId))));
             row.appendChild(button);
         }
         if (issue.code === "MISSING_LAYER") {
-            const button = document.createElement("button"); button.textContent = "移除失效绑定";
-            button.addEventListener("click", () => run(() => modal("移除失效绑定", async doc => {
+            const button = createButton(); button.textContent = "移除失效绑定";
+            onClick(button, () => run(() => modal("移除失效绑定", async doc => {
                 const value = await metadata(doc);
                 if (store.flattenLayers(doc.layers).some(layer => String(layer.id) === String(issue.layerId))) throw new Error("图层已存在，请重新检查。");
                 const nodeId = value.nodes[issue.layerId] && value.nodes[issue.layerId].nodeId;
@@ -491,13 +531,13 @@ async function run(action) {
     if (busy || lanhuBusy) return;
     if (lanhuHost.status().uploading) { status("蓝湖上传尚在进行，请完成后再修改资源或PSD。"); return; }
     busy = true;
-    for (const button of document.querySelectorAll("button")) button.disabled = true;
+    for (const button of document.querySelectorAll(".ui-button")) button.disabled = true;
     try { const result = await action(); if (action !== refresh) await refresh(); if (typeof result === "string") status(result); }
     catch (error) { status(errorText(error)); }
-    finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; updateLanhuControls(); }
+    finally { busy = false; for (const button of document.querySelectorAll(".ui-button")) button.disabled = false; updateLanhuControls(); }
 }
 function bind(id, action) {
-    $(id).addEventListener("click", () => run(async () => {
+    onClick($(id), () => run(async () => {
         if (catalogLoading) throw new Error("目录正在加载，请稍候再操作。");
         if (catalogFailure && !["refresh", "import"].includes(id)) throw new Error("本地目录不可读，已阻止覆盖。请显式导入备份目录恢复。");
         return action();
@@ -558,7 +598,7 @@ async function primaryAction() {
     return "已创建 / 引用并应用到选层；原始源快照保留。请使用 Cmd+S 保存 PSD。";
 }
 bind("primaryAction", primaryAction);
-$("toggleAdvanced").addEventListener("click", () => {
+onClick($("toggleAdvanced"), () => {
     advancedOpen = !advancedOpen;
     $("advancedPanel").style.display = advancedOpen ? "block" : "none";
     $("toggleAdvanced").textContent = advancedOpen ? "隐藏高级操作" : "显示高级操作";
