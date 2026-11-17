@@ -1,10 +1,12 @@
 # 生产化合成测试材料
 
-状态：离线生成与 Node 检查已通过；2026-11-17 集成负责人已在 Photoshop 2027 实际创建并保存两稿，各 12 材料层、实际 sRGB/8-bit。[创建报告](/Users/betta/.codex/visualizations/2026/11/17/01a1e7c5-ba46-7533-bcc1-580af0395c6a/lanhu-production/synthetic-fixtures/production-fixture-ps-result.json) 为 `synthetic-documents-created`，PSD 哈希见 [D04](../../../Docs~/Productionization/ACCEPTANCE-MATRIX.md)。本项仅通过材料创建，真实面板、安装、上传和 Unity 闭环仍为 pending。本目录不含生产素材、Cookie 或 Token。
+当前从独立插件仓库根目录维护与运行；Framework 保留显式同步的集成快照。最新验收见 [Docs/ACCEPTANCE.md](../Docs/ACCEPTANCE.md)，下方材料创建与初轮采集段落保留当时状态，不将历史 pending 覆盖后续已有证据。
+
+状态：离线生成与 Node 检查已通过；2026-11-17 集成负责人已在 Photoshop 2027 实际创建并保存两稿，各 12 材料层、实际 sRGB/8-bit。[创建报告](/Users/betta/.codex/visualizations/2026/11/17/01a1e7c5-ba46-7533-bcc1-580af0395c6a/lanhu-production/synthetic-fixtures/production-fixture-ps-result.json) 为 `synthetic-documents-created`，PSD 哈希见 [材料证据](../Docs/ACCEPTANCE.md#materials)。本项仅通过材料创建，真实面板、安装、上传和 Unity 闭环仍为 pending。本目录不含生产素材、Cookie 或 Token。
 
 后续 host API 源采集已通过：六份实际 PNG 与独立原始 RGBA 全部零差异、均保留 64×48，详见矩阵 D05。采集时 asymmetric-point 使用四边 padding=0，透明/软边使用四边 padding=2。这不改变实际 Panel 点击、保存重开和上传的 pending 状态。
 
-在 `Tools~/Photoshop` 目录执行已有的 Node 命令：
+从独立仓库根目录执行已有的 Node 命令：
 
 ```sh
 node Fixtures/generate-production-fixtures.cjs
@@ -49,6 +51,6 @@ Bilinear 是独立 CPU 参考：texel center、整张纹理 clamp、无 mipmap/�
 ## 交给负责人的最短步骤
 
 1. 先冻结安装版本/哈希并完成可回滚安装；再生成这两份全新的合成 PSD。
-2. 按 [面板验收](../../../Docs~/Productionization/PANEL-ACCEPTANCE.md) 通过面板登记三个源，同层应用目标尺寸并复制成九个实例、保存/重开，再在第二稿引用同一目录。实际 panelAssigned 身份写入审计，不能用生成器代填。
+2. 按 [当前面板验收范围](../Docs/ACCEPTANCE.md#remaining) 通过面板登记三个源，同层应用目标尺寸并复制成九个实例、保存/重开，再在第二稿引用同一目录。实际 panelAssigned 身份写入审计，不能用生成器代填。
 3. 仅在测试项目上传两稿，云端回读后执行现有 workflow；新的 `gameUIResourceRoot` 路径和跨模块输出由 C/集成负责人确认。
 4. 对照 manifest 的哈希/尺寸/采样、真实 Sprite GUID 和渲染结果留证。既有三组 LanhuGameUI*Audit 与共享 Profile 的前后哈希必须不变。

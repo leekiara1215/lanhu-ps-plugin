@@ -1,6 +1,8 @@
 # GameUI 隔离试用交付
 
-治理版本 2026-08-31.2；冻结接口见 `../../Docs~/Productionization/CONTRACT.md`。
+当前独立仓库是插件开发源；Framework 保留经过审查的集成快照。后续按 [维护与同步](Docs/MAINTENANCE.md) 记录指定提交，禁止两份 runtime 独立演进。
+治理版本 2026-08-31.2；冻结接口见 [Docs/CONTRACT.md](Docs/CONTRACT.md)，最新实际宿主证据见 [验收快照](Docs/ACCEPTANCE.md)。
+本文下方 B 实现阶段的“未验证”是历史执行范围；后续 UDT 加载和实装生命周期已由集成负责人观察，不能继续当作当前未执行，也不能外推为新上传闭环通过。
 本交付仅覆盖测试项目 `cfea1199-7c07-48d9-86ef-cdbd3385c237`。开发完成与实机可试用分开验收。
 
 ## 两部分入口
@@ -56,7 +58,7 @@ capture 核对原生 frame 宽高等于 contentWidth/Height，再用当前 left/
 
 ## 确定性构建
 
-在本目录执行。`--output` 是新的输出目录，ZIP 自动位于同名 `.zip`；已有输出拒绝覆盖。
+从独立仓库根目录执行。`--output` 是新的输出目录，ZIP 自动位于同名 `.zip`；已有输出拒绝覆盖。
 构建不访问实装插件、不启动 Photoshop、不包含官方二进制。ZIP 排序、时间戳和文件权限固定，使用 STORED 压缩方式，
 相同输入及 release 产生相同字节。`bundle.json` 记录全部文件哈希；校验值必须为 64 位小写十六进制 SHA-256，文件必须存在且为普通文件，实际文件清单必须一致。
 相同 release 的内容变更不允许升级，必须新 release。
@@ -65,7 +67,7 @@ capture 核对原生 frame 宽高等于 contentWidth/Height，再用当前 left/
 python3 -B gameui-delivery.py build --output '/绝对路径/新目录/gameui-test-0.4.0' --release '0.4.0-test'
 ```
 
-A 提供包含 `manifest.json` 和自包含依赖的 Panel staging 后可一起打包：
+先运行 `node Panel/build-panel.cjs /absolute/new/staging/GameUIAuthoring` 得到自包含 staging，再按以下入口归档：
 
 ```sh
 python3 -B gameui-delivery.py build --output '/绝对路径/新目录/gameui-test-with-panel' --release '0.4.0-test-panel' --panel-staging '/绝对路径/A构建的Panel目录'
@@ -113,7 +115,7 @@ recover 恢复中断操作前的文件，且仅允许当前字节等于事务记
 `--clear-stale-lock` 仅在记录的 PID 已退出时解除锁，不终止进程。不要删除日志或手工覆盖备份来绕过拒绝。
 `build-audit-patch.py` 保留只读补丁构建 API；原先 `--install/--restore` 明确拒绝，防止走无事务的旧安装流程。
 
-## 独立 Panel 的宿主加载与分发
+## 独立 Panel 的宿主加载与分发（保留 B 实现阶段记录）
 
 本任务未下载或安装 UXP Developer Tool（UDT），未控制 Photoshop，未生成/安装 CCX。
 当前交付的独立面板路径是 A 的 staging（若打入 bundle 则为 `Panel/manifest.json`）。
@@ -129,7 +131,7 @@ Adobe 文档说明 Photoshop 分发包为 `.ccx`，通过 UDT Package 创建；�
 [Photoshop Package](https://developer.adobe.com/photoshop/uxp/guides/distribution/packaging-your-plugin/)、
 [UXP Install](https://developer.adobe.com/uxp/guides/how-to/distribution/install/)。
 
-## 专项测试与已知未验证项
+## 专项测试与已知未验证项（历史范围）
 
 ```sh
 node --test test-gameui.cjs test-export.cjs
