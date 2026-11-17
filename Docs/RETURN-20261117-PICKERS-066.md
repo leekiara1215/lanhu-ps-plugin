@@ -29,7 +29,7 @@ git diff --check
 
 HTML标签平衡、87个静态ID唯一；静态button/select/option均为0，六个选择器由同一组件初始化。Panel仍12文件，bundle仍19项清单；构包和ZIP/目录逐字节核对通过。后端未变，不重跑其授权/上传/交付/Unity全量；不与前序测试机械相加。
 
-UDT已Unload0.6.5、移除工作区旧路径注册并Add新manifest，观察到0.6.6 Loaded / Plugin Load Successful。只读Debug当前默认Console无消息，插件context已连接且显示No Issues；未eval或改变DOM。CUA仍不能取得PS浮层像素，已向用户集中请求浅色下拉及滚动遮挡的实际反馈，当前不把源码/DOM检查宣称为这两项实机通过。
+UDT已Unload0.6.5、移除工作区旧路径注册并Add新manifest，观察到0.6.6 Loaded / Plugin Load Successful。只读Debug当前默认Console无消息，插件context已连接且显示No Issues；未eval或改变DOM。随后用户针对浅色细边框下拉与滚动后不再遮挡蓝色顶部栏，明确回复“两处都已正常”。这是两项用户实机确认；CUA仍未捕获PS浮层像素，不外推全部选项/键盘/编辑路径均已实机通过。
 
 未由代理应用、上传、切图、授权或修改PSD；两份既有PSD磁盘SHA与0.6.5只读基线相同。[宿主与磁盘核对](/Users/betta/.codex/visualizations/2026/11/17/01a1e8e3-bf08-7921-b31d-f142d4d9ec96/lanhu-pickers-0.6.6/host-load-066-evidence.json)。
 

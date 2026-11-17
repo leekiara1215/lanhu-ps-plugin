@@ -107,4 +107,4 @@ Node61/61、Python17/17、语法/diff及19项包清单通过。release=`0.6.0-te
 
 ## 0.6.6实载：自绘选择器与原生输入视口裁剪
 
-后续用户两张0.6.5截图确认下拉仍为深灰色，滚动后输入编辑层覆盖顶部蓝栏。源码 `bb0b9ffab5cab5a75897030db61e700417dd9ba0` 将六个select统一为自绘combobox/listbox，保留精确值、禁用态与测试项目门禁；增加输入越过内容视口时隐藏、滚回恢复及销毁清理。面板专项52/52、HTML/语法/diff及19项包核对通过；后端/冻结模块不变。已UDT加载0.6.6 Loaded / Plugin Load Successful，已请求两处实际视觉反馈，未从源码/DOM外推实机通过。代理未应用/上传/切图/授权/写PSD，两稿磁盘SHA相同。最新release=`0.6.6-test-pickers-clipping`，完整候选、证据及回交步骤见[0.6.6接续](RETURN-20261117-PICKERS-066.md)。
+后续用户两张0.6.5截图确认下拉仍为深灰色，滚动后输入编辑层覆盖顶部蓝栏。源码 `bb0b9ffab5cab5a75897030db61e700417dd9ba0` 将六个select统一为自绘combobox/listbox，保留精确值、禁用态与测试项目门禁；增加输入越过内容视口时隐藏、滚回恢复及销毁清理。面板专项52/52、HTML/语法/diff及19项包核对通过；后端/冻结模块不变。已UDT加载0.6.6 Loaded / Plugin Load Successful。用户随后对浅色下拉与滚动后不再覆盖顶部栏明确回复“两处都已正常”；这是用户实机确认，CUA未取得浮层像素，不外推全部交互通过。代理未应用/上传/切图/授权/写PSD，两稿磁盘SHA相同。最新release=`0.6.6-test-pickers-clipping`，完整候选、证据及回交步骤见[0.6.6接续](RETURN-20261117-PICKERS-066.md)。
