@@ -70,13 +70,14 @@ function onClick(element, action) {
 for (const element of document.querySelectorAll(".ui-button")) prepareButton(element);
 
 const selectControls = new Map();
+const selectOverlay = $("panelOverlays");
 let openedSelect = null;
 function closeSelectMenus() { if (openedSelect) openedSelect.close(); }
 function makeSelect(id, rows, selected = "") {
     const element = $(id), trigger = document.createElement("div"), caption = document.createElement("span"), arrow = document.createElement("span"), list = document.createElement("div");
     const menu = document.createElement("div"), viewport = document.createElement("div"), rail = document.createElement("div"), thumb = document.createElement("div");
     let choices = [], value = "", disabled = false, expanded = false, active = -1;
-    let offset = 0, drag = null, lastWheelAt = 0;
+    let offset = 0, drag = null, lastWheelAt = 0, maximumHeight = 160, popupBounds = null;
     const callbacks = [];
     trigger.className = "ui-select-trigger"; trigger.setAttribute("role", "combobox");
     trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-controls", id + "-options");
@@ -90,17 +91,37 @@ function makeSelect(id, rows, selected = "") {
     rail.setAttribute("role", "scrollbar"); rail.setAttribute("aria-label", trigger.getAttribute("aria-label") + "列表滚动");
     rail.setAttribute("aria-controls", id + "-viewport"); rail.setAttribute("aria-orientation", "vertical"); rail.setAttribute("aria-valuemin", "0");
     viewport.appendChild(list); rail.appendChild(thumb); menu.appendChild(viewport); menu.appendChild(rail);
-    element.appendChild(trigger); element.appendChild(menu);
+    element.appendChild(trigger); selectOverlay.appendChild(menu);
     // Avoid host-painted scrollbars and UXP's unreliable hidden scrollTop.
     // Move the option content and the light thumb from the same bounded offset.
     function metrics() {
         const content = Math.max(list.scrollHeight || 0, list.offsetHeight || 0);
-        const height = Math.min(160, content), maximum = Math.max(0, content - height);
+        const height = Math.min(maximumHeight, content), maximum = Math.max(0, content - height);
         const track = Math.max(0, height - 4), size = maximum ? Math.min(track, Math.max(24, track * height / content)) : track;
         return { height, maximum, size, travel: track - size };
     }
     function refreshScroll() {
         if (!expanded) return;
+        let anchor, bounds, origin, above = 0, below = 0;
+        if (typeof trigger.getBoundingClientRect === "function" && typeof $("panelViewport").getBoundingClientRect === "function") {
+            anchor = trigger.getBoundingClientRect(); bounds = $("panelViewport").getBoundingClientRect();
+            origin = selectOverlay.getBoundingClientRect();
+            if (![anchor.top, anchor.bottom, anchor.left, anchor.right, bounds.top, bounds.bottom, bounds.left, bounds.right, origin.top, origin.left].every(Number.isFinite) ||
+                anchor.bottom <= anchor.top || anchor.right <= anchor.left || bounds.right - bounds.left <= 8 ||
+                anchor.top < bounds.top - .5 || anchor.bottom > bounds.bottom + .5 || anchor.right <= bounds.left || anchor.left >= bounds.right) {
+                close(); return;
+            }
+            menu.style.width = Math.min(anchor.right - anchor.left, bounds.right - bounds.left - 8) + "px";
+            above = Math.max(0, anchor.top - bounds.top - 8);
+            below = Math.max(0, bounds.bottom - anchor.bottom - 8);
+            // 10px is the menu's vertical padding and border; keep the list
+            // within the content viewport, never over the fixed navigation.
+            const desired = Math.min(160, Math.max(list.scrollHeight || 0, list.offsetHeight || 0)) + 10;
+            const upwards = below < desired && above > below;
+            maximumHeight = Math.min(160, Math.max(0, (upwards ? above : below) - 10));
+            if (maximumHeight < 1) { close(); return; }
+            menu.setAttribute("data-placement", upwards ? "top" : "bottom");
+        }
         let m = metrics();
         rail.style.display = m.maximum > 0 ? "block" : "none";
         m = metrics(); // The rail can change wrapping and therefore content height.
@@ -114,6 +135,14 @@ function makeSelect(id, rows, selected = "") {
         list.style.top = -offset + "px";
         thumb.style.height = m.size + "px";
         thumb.style.marginTop = (m.maximum ? offset / m.maximum * m.travel : 0) + "px";
+        if (anchor) {
+            const width = parseFloat(menu.style.width), height = m.height + 10;
+            const left = Math.max(bounds.left + 4, Math.min(anchor.left, bounds.right - width - 4));
+            const top = menu.getAttribute("data-placement") === "top" ? anchor.top - 4 - height : anchor.bottom + 4;
+            menu.style.left = left - origin.left + "px";
+            menu.style.top = top - origin.top + "px";
+            popupBounds = { left, top, right: left + width, bottom: top + height };
+        }
     }
     function scrollTo(top) { offset = Math.max(0, Math.min(metrics().maximum, top)); refreshScroll(); }
     function revealActive() {
@@ -153,14 +182,16 @@ function makeSelect(id, rows, selected = "") {
         const delta = Number.isFinite(event.deltaY) ? event.deltaY : -(event.wheelDeltaY || event.wheelDelta || 0);
         if (!Number.isFinite(delta) || !delta) return;
         if (event.type === "wheel") lastWheelAt = Date.now();
-        const m = metrics(), previous = offset;
+        const m = metrics();
         scrollTo(offset + delta * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? m.height : 1));
-        if (offset !== previous) { event.preventDefault(); event.stopPropagation(); }
+        // A floating menu owns the gesture even at its ends. Passing it through
+        // would move the field and menu underneath the pointer.
+        event.preventDefault(); event.stopPropagation();
     }
     menu.addEventListener("wheel", onWheel); menu.addEventListener("mousewheel", onWheel);
     rail.addEventListener("keydown", event => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
-        if (event.key === "Tab") { close(); return; }
+        if (event.key === "Tab") { close(true); return; }
         const m = metrics(), destinations = { ArrowUp: offset - 30, ArrowDown: offset + 30, PageUp: offset - m.height * .9, PageDown: offset + m.height * .9, Home: 0, End: m.maximum };
         if (!expanded || !Object.prototype.hasOwnProperty.call(destinations, event.key)) return;
         event.preventDefault(); event.stopPropagation(); scrollTo(destinations[event.key]);
@@ -183,13 +214,14 @@ function makeSelect(id, rows, selected = "") {
     function close(focus = false) {
         const wasExpanded = expanded;
         endDrag();
-        expanded = false; if (openedSelect === control) openedSelect = null; paint();
+        expanded = false; popupBounds = null; if (openedSelect === control) openedSelect = null; paint();
         if (wasExpanded) scheduleInputClipping();
         if (focus && typeof trigger.focus === "function") trigger.focus();
     }
     function open() {
         if (disabled || destroyed) return;
         if (openedSelect && openedSelect !== control) openedSelect.close();
+        if (typeof trigger.focus === "function") trigger.focus();
         expanded = true; openedSelect = control;
         active = choices.findIndex(row => row.id === value && !row.disabled);
         if (active < 0) active = choices.findIndex(row => !row.disabled);
@@ -208,7 +240,9 @@ function makeSelect(id, rows, selected = "") {
         paint();
         revealActive();
     }
-    const control = { element, close, refreshScroll, onChange(callback) { callbacks.push(callback); },
+    const control = { element, close, refreshScroll, get bounds() { return popupBounds; },
+        contains(target) { return element.contains(target) || menu.contains(target); },
+        onChange(callback) { callbacks.push(callback); },
         setChoices(next, selectedValue) {
             close(); offset = 0; choices = next.map(row => ({ id: String(row.id), name: String(row.name), disabled: !!row.disabled }));
             list.textContent = "";
@@ -437,29 +471,33 @@ function updateInputClipping() {
     for (const input of document.querySelectorAll("input")) {
         if (typeof input.getBoundingClientRect !== "function") continue;
         const box = input.getBoundingClientRect();
-        const clipped = !Number.isFinite(box.top) || !Number.isFinite(box.bottom) || box.bottom <= box.top || box.top < viewport.top - .5 || box.bottom > viewport.bottom + .5;
+        const popup = openedSelect && openedSelect.bounds;
+        const covered = popup && box.left < popup.right && box.right > popup.left && box.top < popup.bottom && box.bottom > popup.top;
+        const clipped = !Number.isFinite(box.top) || !Number.isFinite(box.bottom) || box.bottom <= box.top || box.top < viewport.top - .5 || box.bottom > viewport.bottom + .5 || covered;
         input.style.visibility = clipped ? "hidden" : "visible";
         input.style.opacity = clipped ? "0" : "1";
     }
 }
 function scheduleInputClipping() {
     if (destroyed) return;
-    if (openedSelect) openedSelect.refreshScroll();
     updateScrollbar();
+    if (openedSelect) openedSelect.refreshScroll();
     updateInputClipping();
     if (clippingFrame !== null || !hostWindow || typeof hostWindow.requestAnimationFrame !== "function") return;
-    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; if (openedSelect) openedSelect.refreshScroll(); updateScrollbar(); updateInputClipping(); });
+    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; updateScrollbar(); if (openedSelect) openedSelect.refreshScroll(); updateInputClipping(); });
 }
 function onOutsideSelectClick(event) {
-    if (openedSelect && !openedSelect.element.contains(event.target)) closeSelectMenus();
+    if (openedSelect && !openedSelect.contains(event.target)) closeSelectMenus();
 }
 document.addEventListener("click", onOutsideSelectClick);
+document.addEventListener("focusin", onOutsideSelectClick);
 $("panelViewport").addEventListener("scroll", scheduleInputClipping);
 if (hostWindow && typeof hostWindow.addEventListener === "function") hostWindow.addEventListener("resize", scheduleInputClipping);
 
 function lanhuMessage(message) {
     if (destroyed) return;
     $("lanhuStatus").textContent = message;
+    scheduleInputClipping();
 }
 const TEST_PROJECT_ID = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
 let boardScope = 1;
@@ -531,15 +569,28 @@ function renderLanhuScales(device, selected, scales) {
     const rows = scales && scales[device] || [];
     fillSelect("lanhuScale", rows.map(item => ({ id: item.label, name: item.label + " · " + item.value })), selected, "请选择设计倍数");
 }
-function showTab(name) {
+let activePanelTab = "authoring", activeLanhuTab = "Upload";
+const pageScrollPositions = new Map();
+function pageScrollKey() { return activePanelTab === "lanhu" ? "lanhu:" + activeLanhuTab : "authoring"; }
+function showPanelView(name, subtab = activeLanhuTab) {
     endContentPan();
+    endScrollDrag();
     closeSelectMenus();
+    pageScrollPositions.set(pageScrollKey(), contentScrollTop);
+    activePanelTab = name; activeLanhuTab = subtab;
+    contentScrollTop = pageScrollPositions.get(pageScrollKey()) || 0;
     $("authoringPane").style.display = name === "authoring" ? "block" : "none";
     $("lanhuPane").style.display = name === "lanhu" ? "block" : "none";
     $("tabAuthoring").setAttribute("aria-selected", name === "authoring" ? "true" : "false");
     $("tabLanhu").setAttribute("aria-selected", name === "lanhu" ? "true" : "false");
+    for (const item of ["Upload", "Slice"]) {
+        $("lanhu" + item + "View").style.display = item === subtab ? "block" : "none";
+        $("lanhu" + item + "Tab").setAttribute("aria-selected", item === subtab ? "true" : "false");
+    }
     renderLanhuWorkspace();
+    scheduleInputClipping();
 }
+function showTab(name) { showPanelView(name); }
 lanhuHost = createLanhuHost({ ps, uxp, document, window: typeof window === "undefined" ? {} : window,
     nativeRequire: require,
     loadRuntime() {
@@ -604,17 +655,14 @@ for (const [id, action] of [["lanhuSliceLayer", "sliceWithLayer"], ["lanhuSliceG
     onClick($(id), () => lanhuTask(() => lanhuHost.perform(action)));
 }
 for (const name of ["Upload", "Slice"]) onClick($("lanhu" + name + "Tab"), () => {
-    for (const item of ["Upload", "Slice"]) {
-        $("lanhu" + item + "View").style.display = item === name ? "block" : "none";
-        $("lanhu" + item + "Tab").setAttribute("aria-selected", item === name ? "true" : "false");
-    }
+    showPanelView("lanhu", name);
 });
 showTab("authoring");
 
 function displayText(value) {
     return String(value).replace(/[A-Za-z0-9._@:/-]{24,}/g, token => token.match(/.{1,20}/g).join("\n"));
 }
-function status(message) { $("status").textContent = displayText(message); }
+function status(message) { $("status").textContent = displayText(message); scheduleInputClipping(); }
 function errorText(error) {
     const original = String(error && error.message || error);
     $("errorDetails").textContent = displayText((error && error.code ? "错误码：" + error.code + "\n" : "") + original);
@@ -1091,6 +1139,7 @@ uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy
     closeSelectMenus();
     disposeScrollbar();
     document.removeEventListener("click", onOutsideSelectClick);
+    document.removeEventListener("focusin", onOutsideSelectClick);
     $("panelViewport").removeEventListener("scroll", scheduleInputClipping);
     if (hostWindow && typeof hostWindow.removeEventListener === "function") hostWindow.removeEventListener("resize", scheduleInputClipping);
     if (clippingFrame !== null && hostWindow && typeof hostWindow.cancelAnimationFrame === "function") hostWindow.cancelAnimationFrame(clippingFrame);

@@ -91,7 +91,11 @@ label { text-align: left !important; align-items: stretch; }
 .ui-select-trigger[aria-expanded="true"], .ui-select-trigger:focus { border-color: #2878ff; }
 .ui-select[aria-disabled="true"] .ui-select-trigger { background: #f8f9fc; border-color: #e5e9f0; color: #a4adba; cursor: default; }
 .ui-select[aria-disabled="true"] .ui-select-arrow { color: #b8c0cc; }
-.ui-select-menu { display: none; flex-direction: row; align-items: stretch; width: 100%; margin-top: 4px; padding: 4px; box-sizing: border-box; border: 1px solid #dce5f2; border-radius: 4px; background: #fff; }
+/* The zero-height portal is a sibling of the clipped scrolling content. Only
+   its absolutely positioned menus receive pointer input or occupy pixels. */
+body { position: relative; }
+#panelOverlays { position: absolute; top: 0; left: 0; width: 100%; height: 0; overflow: visible; z-index: 10; }
+.ui-select-menu { position: absolute; display: none; flex-direction: row; align-items: stretch; margin: 0; padding: 4px; box-sizing: border-box; border: 1px solid #dce5f2; border-radius: 4px; background: #fff; }
 .ui-select-viewport { flex: 1 1 auto; width: 100%; min-width: 0; overflow: hidden; }
 .ui-select-list { position: relative; top: 0; display: block; width: 100%; box-sizing: border-box; }
 .ui-select-scrollbar { flex: 0 0 10px; width: 10px; padding: 2px; box-sizing: border-box; border-radius: 3px; background: #f7f8fa; cursor: pointer; }

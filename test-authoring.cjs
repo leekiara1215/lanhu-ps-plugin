@@ -471,7 +471,8 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     return { ...env, elements, file, releaseCatalog, entrypoints, documentEvents,
         async notify(name = "select") { if (notification) await notification(name, {}); },
         selectParts(id) {
-            const [trigger, menu] = elements[id].children;
+            const [trigger] = elements[id].children;
+            const menu = elements.panelOverlays.children.find(item => item.children[0].id === id + "-viewport");
             const [viewport, rail] = menu.children;
             return { trigger, menu, viewport, rail, thumb: rail.children[0], list: viewport.children[0] };
         },
@@ -1293,7 +1294,7 @@ test("picker rail scrolls clipped content with wheel, drag, paging and keys with
     rail.listeners.keydown(event({ target: rail, key: "End" }));
     assert.equal(list.style.top, "-320px"); assert.equal(thumb.style.marginTop, "104px");
     const boundary = event({ type: "wheel", deltaY: 30 }); menu.listeners.wheel(boundary);
-    assert.equal(boundary.stopped, undefined, "At the boundary the outer panel may consume the wheel.");
+    assert.equal(boundary.stopped, true, "A floating menu keeps boundary gestures from moving its anchor.");
     rail.listeners.mousedown(event({ target: thumb, button: 0, clientY: 100 }));
     env.documentEvents.mousemove(event({ clientY: 48 }));
     assert.equal(list.style.top, "-160px"); assert.equal(rail.getAttribute("data-dragging"), "true");
@@ -1329,6 +1330,73 @@ test("scroll clipping hides native editors outside the content viewport and rest
     assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0); assert.equal(env.state.imagingCalls.length, 0);
     await env.entrypoints.value.plugin.destroy();
     assert.equal(env.documentEvents.click, undefined); assert.equal(env.elements.panelViewport.listeners.scroll, undefined);
+});
+
+test("floating pickers follow viewport bounds, flip above and restore covered native editors without changing values", async () => {
+    const env = await panelHarness();
+    const { trigger, menu, list, viewport } = env.selectParts("sampling");
+    const box = (left, top, right, bottom) => ({ left, top, right, bottom });
+    let anchor = box(200, 140, 340, 172);
+    env.elements.panelViewport.getBoundingClientRect = () => box(10, 89, 310, 400);
+    env.elements.panelOverlays.getBoundingClientRect = () => box(5, 10, 315, 10);
+    trigger.getBoundingClientRect = () => anchor;
+    list.scrollHeight = 60;
+    env.elements.targetWidth.getBoundingClientRect = () => box(180, 180, 250, 212);
+    env.elements.targetHeight.getBoundingClientRect = () => box(20, 180, 100, 212);
+    env.elements.targetWidth.value = "180";
+    await trigger.listeners.click();
+    assert.equal(menu.parentNode, env.elements.panelOverlays, "Menus must not contribute to the field or content layout.");
+    assert.equal(env.elements.sampling.children.length, 1);
+    assert.equal(menu.getAttribute("data-placement"), "bottom");
+    assert.equal(menu.style.left, "161px"); assert.equal(menu.style.top, "166px");
+    assert.equal(menu.style.width, "140px");
+    assert.equal(env.elements.targetWidth.style.visibility, "hidden");
+    assert.equal(env.elements.targetHeight.style.visibility, "visible", "Only overlapping editors should be hidden.");
+    env.documentEvents.click({ target: list.children[0] });
+    assert.equal(trigger.getAttribute("aria-expanded"), "true", "Portal clicks still belong to the picker.");
+    anchor = box(200, 360, 340, 392); list.scrollHeight = 480;
+    env.elements.panelViewport.listeners.scroll();
+    assert.equal(menu.getAttribute("data-placement"), "top"); assert.equal(menu.style.top, "176px");
+    assert.equal(viewport.style.height, "160px");
+    anchor = box(200, 70, 340, 102);
+    env.elements.panelViewport.listeners.scroll();
+    assert.equal(menu.style.display, "none", "A partially clipped trigger closes its floating menu.");
+    assert.equal(env.elements.targetWidth.style.visibility, "visible");
+    assert.equal(env.elements.targetWidth.value, "180");
+    anchor = box(20, 200, 160, 232);
+    await trigger.listeners.click();
+    assert.equal(viewport.style.height, "150px", "Menu height is capped by the available viewport space.");
+    env.documentEvents.focusin({ target: env.elements.targetHeight });
+    assert.equal(menu.style.display, "none");
+    await env.entrypoints.value.plugin.destroy(); assert.equal(env.documentEvents.focusin, undefined);
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
+});
+
+test("main and Lanhu subtabs close floating menus, release drag and restore each page's bounded scroll position", async () => {
+    const view = { connected: true, loggedIn: true, uploading: false, teams: [], projects: [], groups: [], scales: {} };
+    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => view, workspace: () => view, async destroy() {} }) });
+    const { panelViewport: viewport, panelContent: content, panelScrollbar: rail, panelScrollThumb: thumb } = env.elements;
+    viewport.clientHeight = 300;
+    Object.defineProperty(content, "scrollHeight", { get() {
+        return env.elements.authoringPane.style.display !== "none" ? 1200 : env.elements.lanhuUploadView.style.display !== "none" ? 1000 : 450;
+    } });
+    const wheel = deltaY => viewport.listeners.wheel({ type: "wheel", deltaY, preventDefault() {} });
+    wheel(200); assert.equal(content.style.top, "-200px");
+    await env.click("tabLanhu"); assert.equal(parseFloat(content.style.top), 0);
+    wheel(300); await env.selectParts("lanhuDevice").trigger.listeners.click();
+    rail.listeners.mousedown({ target: thumb, button: 0, clientY: 100, preventDefault() {} });
+    assert.ok(env.documentEvents.mousemove);
+    await env.click("lanhuSliceTab");
+    assert.equal(env.selectParts("lanhuDevice").menu.style.display, "none");
+    assert.equal(env.documentEvents.mousemove, undefined);
+    assert.equal(parseFloat(content.style.top), 0); assert.equal(rail.getAttribute("aria-valuemax"), "150");
+    wheel(500); assert.equal(content.style.top, "-150px");
+    await env.click("lanhuUploadTab"); assert.equal(content.style.top, "-300px");
+    await env.click("tabAuthoring"); assert.equal(content.style.top, "-200px");
+    await env.click("tabLanhu"); assert.equal(content.style.top, "-300px");
+    await env.click("lanhuSliceTab"); assert.equal(content.style.top, "-150px");
+    assert.equal(env.elements.tabLanhu.getAttribute("aria-selected"), "true");
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
 });
 
 
