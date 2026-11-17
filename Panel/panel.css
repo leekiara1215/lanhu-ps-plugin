@@ -1,58 +1,69 @@
+/* Shared visual language follows the pinned Lanhu 1.0.32 light theme. */
 html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
-body { display: flex; flex-direction: column; height: 100vh; color: #e8e8e8; background: #282828; font-size: 12px; }
-#panelViewport { flex: 1 1 auto; width: 100%; height: calc(100% - 44px); min-height: 0; overflow-x: hidden; overflow-y: scroll; }
-.panel-content { width: 100%; padding: 12px; box-sizing: border-box; }
-h2 { font-size: 18px; margin: 0 0 8px; }
-p { color: #bfbfbf; line-height: 1.5; margin: 6px 0; }
-.scroll-hint, .panel-end { color: #b9d8f0; }
-.scope { background: #4c3c20; padding: 8px; color: #ffdda1; }
-section { display: block; width: 100%; border-top: 1px solid #555; margin-top: 12px; padding-top: 10px; }
-label { display: flex; flex-direction: column; flex-wrap: nowrap; width: 100%; min-width: 0; margin: 6px 0; }
-input, select { width: 100%; min-width: 0; height: 28px; padding: 4px; box-sizing: border-box; border: 1px solid #777; border-radius: 3px; color: #eee; background: #383838; }
-button { display: block; width: 100%; min-width: 0; min-height: 32px; margin: 6px 0; padding: 7px; box-sizing: border-box; color: #eee; background: #454545; border: 1px solid #777; border-radius: 4px; }
+body { display: flex; flex-direction: column; height: 100vh; color: #242833; background: #fff; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 12px; }
+.app-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex: 0 0 44px; width: 100%; height: 44px; padding: 0 16px; box-sizing: border-box; color: #fff; background: #2878ff; }
+.app-name { font-size: 15px; font-weight: bold; }
+.app-version { font-size: 10px; color: #e1ecff; }
+#panelTabs { display: flex; flex-direction: row; flex: 0 0 44px; width: 100%; height: 44px; padding: 0 16px; box-sizing: border-box; background: #fff; border-bottom: 1px solid #e8ebf0; }
+#panelTabs button { flex: 1 1 50%; width: 50%; height: 44px; min-height: 44px; margin: 0; padding: 10px 4px; border: 0; border-bottom: 2px solid #fff; border-radius: 0; color: #6b7280; background: #fff; white-space: normal; }
+#panelTabs button[aria-selected="true"] { color: #2878ff; border-bottom-color: #2878ff; font-weight: bold; }
+#panelViewport { flex: 1 1 auto; width: 100%; height: calc(100% - 88px); min-height: 0; overflow-x: hidden; overflow-y: scroll; background: #f7f8fa; }
+.panel-content { width: 100%; padding: 16px; box-sizing: border-box; }
+.page-heading { padding: 0 0 6px; }
+h2 { font-size: 18px; font-weight: bold; color: #242833; margin: 0 0 6px; }
+h3 { font-size: 13px; font-weight: bold; color: #242833; margin: 0 0 10px; }
+p { color: #7b8391; line-height: 1.6; margin: 6px 0; }
+.field-label { color: #4e5664; }
+.workspace-card, .lanhu-card, .lanhu-quick-actions, #advancedPanel section { display: block; width: 100%; min-width: 0; padding: 12px; margin: 12px 0; box-sizing: border-box; background: #fff; border: 1px solid #e8ebf0; border-radius: 8px; }
+.scope { background: #edf4ff; padding: 9px 10px; color: #4f74a6; border-radius: 5px; font-size: 11px; }
+label { display: flex; flex-direction: column; flex-wrap: nowrap; width: 100%; min-width: 0; margin: 8px 0; color: #525c6c; line-height: 1.6; }
+input, select { width: 100%; min-width: 0; height: 32px; margin-top: 4px; padding: 5px 8px; box-sizing: border-box; border: 1px solid #dce1e8; border-radius: 4px; color: #242833; background: #fff; font-size: 12px; }
+input:focus, select:focus { border-color: #2878ff; }
+button { display: block; width: 100%; min-width: 0; min-height: 32px; margin: 6px 0; padding: 7px 10px; box-sizing: border-box; color: #4e5969; background: #fff; border: 1px solid #dce1e8; border-radius: 4px; font-size: 12px; line-height: 1.5; }
+button:hover { color: #2878ff; border-color: #9bcaff; background: #f5f9ff; }
+button:active { color: #1957d2; background: #edf4ff; }
 button:disabled { opacity: .45; }
-.row { display: flex; flex-wrap: wrap; width: 100%; min-width: 0; }
-.row label { flex: 1 1 45%; width: 45%; min-width: 0; margin: 6px 6px 6px 0; }
-#selection, #identityInfo, #resourceInfo { width: 100%; min-width: 0; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
-.checker { width: 100%; margin-top: 8px; overflow: hidden; background: #777; }
-#previewImage { max-width: 100%; max-height: 240px; width: auto; height: auto; }
-.issue { width: 100%; padding: 6px; margin-top: 6px; box-sizing: border-box; border: 1px solid #a86b32; white-space: pre-wrap; }
-pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #ffdda1; }
-.panel-end { border-top: 1px solid #555; padding: 10px 0 6px; margin-top: 12px; }
-#newResourceSettings, #advancedPanel { width: 100%; }
-#inheritedContract, #targetHint { white-space: pre-wrap; line-height: 1.5; }
-#inheritedContract { padding: 8px; background: #313e49; color: #cbe6fb; }
-.primary-action { background: #245f8e; border-color: #71abd6; font-weight: bold; }
-#toggleAdvanced { background: #323232; }
-#resources { display: block; width: 100%; height: 144px; overflow-x: hidden; overflow-y: scroll; padding: 4px; box-sizing: border-box; border: 1px solid #777; border-radius: 3px; }
-.resource-choice { display: block; width: 100%; min-height: 40px; height: auto; margin: 0 0 4px; text-align: left; white-space: pre-wrap; word-wrap: break-word; }
-.resource-choice[aria-pressed="true"] { background: #245f8e; border-color: #71abd6; }
-#resourceCount { color: #b9d8f0; }
-#panelTabs { display: flex; flex-direction: row; flex: 0 0 44px; width: 100%; height: 44px; padding: 6px 12px; box-sizing: border-box; background: #232323; border-bottom: 1px solid #555; }
-#panelTabs button { flex: 1 1 50%; width: 50%; height: 32px; min-height: 32px; margin: 0; padding: 6px; white-space: normal; }
-#panelTabs #tabAuthoring { margin-right: 8px; }
-#panelTabs button[aria-selected="true"] { background: #245f8e; border-color: #71abd6; font-weight: bold; }
-#authoringPane, #lanhuPane, #lanhuSetup, #lanhuMount { width: 100%; min-width: 0; }
-#authoringLanhuInline, #lanhuFullMount { width: 100%; min-width: 0; }
-#lanhuMount { min-height: 0; }
-#authoringLanhuStatus, #lanhuStatus { white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; }
-.lanhu-quick-actions { width: 100%; margin: 8px 0; padding: 8px; box-sizing: border-box; background: #303030; border: 1px solid #555; border-radius: 3px; }
+input:disabled, select:disabled { color: #9aa1ad; background: #f4f6f8; }
+.primary-action, .lanhu-workspace .lanhu-primary { min-height: 38px; color: #fff; background: #2878ff; border-color: #2878ff; font-weight: bold; }
+.primary-action:hover, .lanhu-workspace .lanhu-primary:hover { color: #fff; background: #4e95ff; border-color: #4e95ff; }
+.primary-action:active, .lanhu-workspace .lanhu-primary:active { color: #fff; background: #1957d2; border-color: #1957d2; }
+.primary-action-area { margin: 12px 0; }
+.row { display: flex; flex-direction: row; flex-wrap: wrap; width: 100%; min-width: 0; }
+.row label { flex: 1 1 44%; width: 44%; min-width: 0; margin: 4px 6px 4px 0; }
+.inset-row label { flex: 1 1 20%; width: 20%; margin-right: 4px; font-size: 11px; }
+.inset-row input { padding: 5px 4px; }
+#selection { width: 100%; min-width: 0; margin: 10px 0; padding: 9px 10px; box-sizing: border-box; background: #fff; border-left: 3px solid #2878ff; border-radius: 4px; color: #566273; white-space: pre-wrap; word-wrap: break-word; }
+#identityInfo, #resourceInfo { width: 100%; min-width: 0; margin: 8px 0; color: #667386; white-space: pre-wrap; word-wrap: break-word; }
+#resources { display: block; width: 100%; height: 144px; overflow-x: hidden; overflow-y: scroll; padding: 4px; box-sizing: border-box; border: 1px solid #e8ebf0; border-radius: 4px; background: #fafbfc; }
+.resource-choice { display: block; width: 100%; min-height: 40px; height: auto; margin: 0 0 4px; padding: 8px; text-align: left; white-space: pre-wrap; word-wrap: break-word; border-color: #e8ebf0; }
+.resource-choice[aria-pressed="true"] { color: #2878ff; background: #edf4ff; border-color: #9bcaff; }
+#resourceCount { font-size: 11px; color: #8993a2; }
+#inheritedContract, #targetHint { white-space: pre-wrap; line-height: 1.6; font-size: 11px; }
+#inheritedContract { padding: 8px; box-sizing: border-box; background: #f3f7ff; color: #58749d; border-radius: 4px; }
 .tool-actions { display: flex; flex-wrap: wrap; width: 100%; min-width: 0; }
-.tool-actions button { flex: 1 1 45%; width: 45%; margin: 4px 4px 0 0; white-space: normal; }
-.lanhu-workspace { width: 100%; min-width: 0; color: #e6eaf0; }
-.lanhu-brand { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 10px; border-bottom: 1px solid #484d58; }
-.lanhu-brand h2 { color: #76a9ff; margin: 0; font-size: 22px; }
-#lanhuAccountSummary { max-width: 65%; white-space: pre-wrap; word-wrap: break-word; }
-.lanhu-workspace h3 { font-size: 13px; margin: 8px 0; }
-.lanhu-card { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; background: #30343b; border: 1px solid #4a505c; border-radius: 5px; }
-.lanhu-workspace label { color: #c9d2df; }
-.lanhu-workspace input, .lanhu-workspace select { background: #252a32; border-color: #586373; }
-.lanhu-workspace .lanhu-primary { min-height: 38px; color: #fff; background: #2878ff; border-color: #5595ff; font-weight: bold; }
-.lanhu-subtabs { display: flex; width: 100%; border-bottom: 1px solid #4a505c; }
-.lanhu-subtabs button { flex: 1 1 50%; width: 50%; margin: 0 0 4px; border: 0; background: #30343b; }
-.lanhu-subtabs button[aria-selected="true"], .lanhu-workspace button[aria-pressed="true"] { color: #91baff; border-color: #5595ff; background: #283d5f; }
-.lanhu-board-list { max-height: 180px; overflow-y: scroll; white-space: pre-wrap; word-wrap: break-word; }
-.lanhu-board-row { padding: 8px 4px; border-bottom: 1px solid #4a505c; }
-.lanhu-scope { color: #e0c38f; }
-.lanhu-workspace .lanhu-secondary { color: #a8caff; background: #2b3039; }
-#lanhuProgress { white-space: pre-wrap; }
+.tool-actions button { flex: 1 1 44%; width: 44%; margin: 4px 4px 0 0; white-space: normal; }
+#toggleAdvanced { color: #758195; background: #f7f8fa; border-color: #e2e6ed; }
+#newResourceSettings, #advancedPanel { width: 100%; }
+.checker { width: 100%; margin-top: 8px; overflow: hidden; background: #e2e6ed; border-radius: 4px; }
+#previewImage { max-width: 100%; max-height: 240px; width: auto; height: auto; }
+.issue { width: 100%; padding: 8px; margin-top: 6px; box-sizing: border-box; color: #9c632b; background: #fff8ed; border: 1px solid #f0d8b2; border-radius: 4px; white-space: pre-wrap; }
+pre { width: 100%; min-width: 0; white-space: pre-wrap; color: #9c632b; line-height: 1.6; }
+.scroll-hint, .panel-end { color: #8993a2; }
+.panel-end { border-top: 1px solid #e8ebf0; padding: 10px 0 6px; margin-top: 12px; }
+#authoringPane, #lanhuPane, #lanhuMount, #authoringLanhuInline, #lanhuFullMount { width: 100%; min-width: 0; }
+#lanhuMount { min-height: 0; }
+#authoringLanhuStatus, #lanhuStatus { white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }
+.lanhu-workspace { width: 100%; min-width: 0; color: #242833; }
+.lanhu-brand { display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 2px 0 10px; border-bottom: 1px solid #e8ebf0; }
+.lanhu-brand h2 { color: #2878ff; margin: 0; font-size: 20px; }
+#lanhuAccountSummary { max-width: 65%; color: #758195; white-space: pre-wrap; word-wrap: break-word; }
+.lanhu-workspace h3 { margin: 4px 0 10px; }
+.lanhu-subtabs { display: flex; flex-direction: row; width: 100%; border-bottom: 1px solid #e8ebf0; }
+.lanhu-subtabs button { flex: 1 1 50%; width: 50%; margin: 0; padding: 10px 4px; border: 0; border-bottom: 2px solid #f7f8fa; border-radius: 0; background: #f7f8fa; }
+.lanhu-subtabs button[aria-selected="true"] { color: #2878ff; border-bottom-color: #2878ff; font-weight: bold; }
+.lanhu-workspace button[aria-pressed="true"] { color: #2878ff; border-color: #9bcaff; background: #edf4ff; }
+.lanhu-board-list { max-height: 180px; overflow-y: scroll; white-space: pre-wrap; word-wrap: break-word; color: #7b8391; }
+.lanhu-board-row { padding: 9px 4px; color: #525c6c; border-bottom: 1px solid #edf0f4; }
+.lanhu-scope { color: #8f784f; font-size: 11px; }
+.lanhu-workspace .lanhu-secondary { color: #2878ff; background: #fff; border-color: #c3d8fc; }
+#lanhuProgress { white-space: pre-wrap; color: #58749d; background: #f3f7ff; }

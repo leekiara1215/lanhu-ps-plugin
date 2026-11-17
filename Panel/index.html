@@ -1,32 +1,39 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
+<div class="app-header"><span class="app-name">资源创作 × 蓝湖</span><span class="app-version">隔离试用 · 0.6.4</span></div>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.3</button>
+<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作 · 0.6.4</button>
 <button id="tabLanhu" type="button" role="tab" aria-selected="false" aria-controls="lanhuPane">蓝湖工具</button>
 </div>
 <div id="panelViewport"><div class="panel-content">
 <div id="authoringPane" role="tabpanel" aria-labelledby="tabAuthoring" style="display: block;">
-<h2>GameUI 公共资源</h2>
-<p class="scope">隔离试用：仅测试项目 cfea1199… 可上传。完成后使用正常 Cmd+S 保存 PSD。</p>
+<div class="page-heading"><h2>公共资源</h2><p>从源图创建资源，在不同尺寸的界面中复用。</p></div>
+<p class="scope">隔离试用：仅测试项目可上传。PSD 请正常 Cmd+S 保存。</p>
 <div id="selection">选择一个普通像素层</div>
-<p>使用资源</p>
+<div class="workspace-card"><h3>资源设置</h3>
+<p class="field-label">使用资源</p>
 <div id="resources" role="group" aria-label="公共资源版本"></div>
 <p id="resourceCount">资源目录正在加载。</p>
 <p id="inheritedContract"></p>
 <div id="newResourceSettings">
 <label>新资源名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
 <p>首次新建填写；引用现有资源自动继承。高级发布新版本时也使用以下设置。</p>
-<div class="row"><label>源边框 L<input id="left" type="number" min="0" value="0"></label><label>T<input id="top" type="number" min="0" value="0"></label><label>R<input id="right" type="number" min="0" value="0"></label><label>B<input id="bottom" type="number" min="0" value="0"></label></div>
+<div class="row inset-row"><label>源边框 L<input id="left" type="number" min="0" value="0"></label><label>T<input id="top" type="number" min="0" value="0"></label><label>R<input id="right" type="number" min="0" value="0"></label><label>B<input id="bottom" type="number" min="0" value="0"></label></div>
 <label>采样<select id="sampling"><option value="Point">点采样（Point）</option><option value="Bilinear" selected>双线性（Bilinear）</option></select></label>
 <p>源透明留白：显式补在选层非空边界外，单位为源像素。默认 0 按非空边界采集，不猜原画布。</p>
-<div class="row"><label>留白 L<input id="padLeft" type="number" min="0" value="0"></label><label>T<input id="padTop" type="number" min="0" value="0"></label><label>R<input id="padRight" type="number" min="0" value="0"></label><label>B<input id="padBottom" type="number" min="0" value="0"></label></div>
+<div class="row inset-row"><label>留白 L<input id="padLeft" type="number" min="0" value="0"></label><label>T<input id="padTop" type="number" min="0" value="0"></label><label>R<input id="padRight" type="number" min="0" value="0"></label><label>B<input id="padBottom" type="number" min="0" value="0"></label></div>
 </div>
+</div>
+<div class="workspace-card"><h3>目标尺寸</h3>
 <div class="row"><label>目标画布宽<input id="targetWidth" type="number" min="1" value="64"></label><label>高<input id="targetHeight" type="number" min="1" value="48"></label></div>
 <p id="targetHint">默认取已绑定的完整目标画布，或当前选层整数非空边界；透明外沿不自动推测。</p>
+</div>
+<div class="primary-action-area">
 <button id="primaryAction" class="primary-action">创建资源并应用到选层</button>
 <pre id="status" role="status"></pre>
-<div class="lanhu-quick-actions">
+</div>
+<div class="lanhu-quick-actions"><h3>蓝湖协作</h3>
 <p id="authoringLanhuStatus" role="status">尚未连接蓝湖工具。</p>
 <div class="tool-actions"><button id="authoringOpenLanhu" type="button">打开蓝湖工具</button><button id="authoringUploadLanhu" type="button" disabled>上传到蓝湖</button></div>
 <button id="authoringToggleLanhu" type="button">在本页展开蓝湖工具</button>
@@ -34,23 +41,23 @@
 </div>
 <button id="toggleAdvanced">显示高级操作</button>
 <div id="advancedPanel" style="display: none;">
-<section>
+<section><h3>检查与资源版本</h3>
 <button id="refresh">刷新 / 检查</button><button id="initialize">仅初始化当前 PSD</button>
 <div id="identityInfo">内部引用与版本由工具自动维护。</div><div id="resourceInfo"></div>
 <button id="createResource">仅从选层新建资源</button><button id="define">更新所选资源名称</button><button id="publishVersion">发布所选资源新版本</button>
 <p>高级分步动作保持原行为；主按钮会自动初始化并将创建 / 引用与应用合并。</p>
 </section>
-<section>
+<section><h3>实例与身份</h3>
 <button id="reference">仅按当前非空边界引用 / 修复绑定</button><button id="repairIdentity">选层重新生成 nodeId</button>
 <button id="copy">复制选层（继承引用）</button><button id="fork">当前文档分配全新身份</button>
 <p>任意原生复制不猜来源；显式选择资源。原生复制文档后，对副本分配全新身份。</p>
 </section>
-<section>
+<section><h3>尺寸预览</h3>
 <button id="preview">只预览目标尺寸</button><button id="apply">仅应用目标尺寸到已绑定选层</button>
 <div class="checker"><img id="previewImage" alt="拉伸预览"></div>
 <p>预览可选。原始快照保存在 XMP；应用后仍保留源像素，不从效果图反推。最终采样表现由集成验收。</p>
 </section>
-<section><button id="import">导入目录 JSON</button><button id="export">导出目录 JSON</button>
+<section><h3>资源目录</h3><button id="import">导入目录 JSON</button><button id="export">导出目录 JSON</button>
 <p>目录自动维护快照 / 版本；引用只取选定资源，不复制整个库。</p></section>
 <div id="issues"></div>
 <p>最近一次操作的原始诊断（供排查）：</p><pre id="errorDetails"></pre>
@@ -68,7 +75,7 @@
 <p id="lanhuAuthHint">在浏览器登录蓝湖并授权，完成后将自动返回登录状态。</p>
 <label>邮箱或手机号<input id="lanhuAccount" type="text" placeholder="输入蓝湖账号"></label>
 <label>密码<input id="lanhuPassword" type="password" placeholder="输入密码"></label>
-<button id="lanhuLoginAction" class="lanhu-primary" type="button">登录</button>
+<button id="lanhuLoginAction" class="lanhu-secondary" type="button">登录</button>
 <p>也可直接使用账号密码登录；浏览器授权支持沿用网页中的蓝湖登录状态。</p>
 </div>
 <div class="tool-actions lanhu-toolbar"><button id="connectLanhu" type="button">刷新账号与项目</button><button id="lanhuLogout" type="button" disabled>退出登录</button></div>
