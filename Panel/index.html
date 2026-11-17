@@ -1,7 +1,12 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
 <body>
+<div id="panelTabs" role="tablist" aria-label="工具页签">
+<button id="tabAuthoring" type="button" role="tab" aria-selected="true" aria-controls="authoringPane">资源创作</button>
+<button id="tabLanhu" type="button" role="tab" aria-selected="false" aria-controls="lanhuPane">蓝湖工具</button>
+</div>
 <div id="panelViewport"><div class="panel-content">
+<div id="authoringPane" role="tabpanel" aria-labelledby="tabAuthoring" style="display: block;">
 <h2>GameUI 公共资源</h2>
 <p class="scope">隔离试用：仅测试项目 cfea1199… 可上传。完成后使用正常 Cmd+S 保存 PSD。</p>
 <div id="selection">选择一个普通像素层</div>
@@ -21,6 +26,12 @@
 <p id="targetHint">默认取已绑定的完整目标画布，或当前选层整数非空边界；透明外沿不自动推测。</p>
 <button id="primaryAction" class="primary-action">创建资源并应用到选层</button>
 <pre id="status" role="status"></pre>
+<div class="lanhu-quick-actions">
+<p id="authoringLanhuStatus" role="status">尚未连接蓝湖工具。</p>
+<div class="tool-actions"><button id="authoringOpenLanhu" type="button">打开蓝湖工具</button><button id="authoringUploadLanhu" type="button" disabled>上传到蓝湖</button></div>
+<button id="authoringToggleLanhu" type="button">在本页展开蓝湖工具</button>
+<div id="authoringLanhuInline" style="display: none;"></div>
+</div>
 <button id="toggleAdvanced">显示高级操作</button>
 <div id="advancedPanel" style="display: none;">
 <section>
@@ -43,6 +54,17 @@
 <p>目录自动维护快照 / 版本；引用只取选定资源，不复制整个库。</p></section>
 <div id="issues"></div>
 <p class="panel-end">已到高级操作底部</p>
+</div>
+</div>
+<div id="lanhuPane" role="tabpanel" aria-labelledby="tabLanhu" style="display: none;">
+<h2>蓝湖工具</h2>
+<p id="lanhuStatus" role="status">尚未连接蓝湖工具。</p>
+<div id="lanhuSetup">
+<p>加载蓝湖工具后登录账号、选择测试项目，即可在此使用蓝湖界面，也可回资源创作页发起上传。</p>
+<button id="connectLanhu" type="button">加载蓝湖工具</button>
+<button id="openLanhuOfficial" type="button">打开官方蓝湖面板</button>
+</div>
+<div id="lanhuFullMount"><div id="lanhuMount"></div></div>
 </div>
 </div></div>
 <script src="panel.js"></script>

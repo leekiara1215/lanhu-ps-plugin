@@ -27,10 +27,18 @@ Panel staging 必须在源码树外，目标目录须为新目录或空目录：
 node Panel/build-panel.cjs /absolute/new/staging/GameUIAuthoring
 ```
 
-输出包含八个运行/说明文件。用 Adobe UXP Developer Tool 添加输出的 `manifest.json` 后 Load；
+基础输出包含10个运行/说明文件。用 Adobe UXP Developer Tool 添加输出的 `manifest.json` 后 Load；
 UDT 与 Photoshop「设置 → 增效工具 → Enable Developer Mode」均须启用。Panel 要求 Photoshop >=25、API 2；
 当前 PS28 / UDT2.4.0.2 已有加载证据。修改源码后重新构建到新目录，再由负责人 Reload/Load。
 ZIP 归档与 Panel 加载、官方上传适配器安装是不同步骤；CCX 正式分发尚未验证。
+
+0.6.0增加“资源创作 / 蓝湖工具”页签，创作页也可内联同一蓝湖界面并调用实际上传入口。构建带官方运行时的12文件候选需显式提供白名单原版：
+
+```sh
+node Panel/build-panel.cjs /absolute/new/staging/GameUIIntegrated --official-plugin /absolute/pinned/original/lanhu
+```
+
+构建前验证原包SHA，在输出目录生成运行时与来源清单，不修改实装官方插件；详情、权限与未过门槛见[面板说明](Panel/README.md)。真实登录、Shadow界面、API2切图/上传及云端/Unity仍需总控验收。
 
 归档入口如下，需使用新的 release 与输出路径；不包含官方二进制：
 

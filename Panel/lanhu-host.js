@@ -1,0 +1,378 @@
+"use strict";
+
+const TEST_PROJECT_ID = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
+
+function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire, onStatus = () => {} }) {
+    let vm = null;
+    let operation = null;
+    let destroyed = false;
+    let runtimeFactory = null;
+    let shadow = null;
+    let epoch = 0;
+    const listeners = [];
+    const timers = new Set();
+    const photoshopListeners = new Set();
+    const ownErrors = new WeakSet();
+
+    function notify(message) { if (!destroyed) onStatus(message); }
+    function error(code, message, cause) {
+        const failure = new Error(message);
+        failure.code = code;
+        if (cause) Object.defineProperty(failure, "cause", { value: cause });
+        ownErrors.add(failure);
+        return failure;
+    }
+    function reject(code, message, cause) {
+        notify(message);
+        throw error(code, message, cause);
+    }
+    function ready() {
+        if (destroyed) reject("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+        if (operation || status().uploading) reject("LANHU_HOST_BUSY", "蓝湖工具正在处理中，请稍候。");
+    }
+    function components() {
+        const queue = vm ? [vm] : [], seen = new Set();
+        const result = [];
+        for (let index = 0; index < queue.length; index++) {
+            const item = queue[index];
+            if (!item || seen.has(item)) continue;
+            seen.add(item);
+            result.push(item);
+            try {
+                if (Array.isArray(item.$children)) queue.push(...item.$children);
+            } catch (_) { /* A component that is being destroyed may no longer expose its children. */ }
+        }
+        return result;
+    }
+    function homeComponent() {
+        return components().find(item => typeof item.uploadArtboard === "function") || null;
+    }
+    function pipelineBusy() {
+        let completedProgress = false;
+        for (const item of components()) {
+            try {
+                if (typeof item.uploadArtboards !== "function" || !item.UploadStatusConfig ||
+                    item.UploadStatusConfig.uploading === undefined || item.uploadStatus === undefined) continue;
+                if (item.uploadStatus === item.UploadStatusConfig.uploading) return true;
+                completedProgress = true;
+            } catch (_) { /* Fall back to the upload route during component transitions. */ }
+        }
+        if (completedProgress) return false;
+        const route = vm && (vm.$router && vm.$router.currentRoute || vm.$route);
+        return !!(route && route.name === "upload");
+    }
+    function status() {
+        const result = { connected: !!vm && !destroyed, uploading: operation === "upload" && !destroyed,
+            projectId: null, loggedIn: false };
+        if (!result.connected) return result;
+        try { result.uploading = result.uploading || pipelineBusy(); }
+        catch (_) { result.uploading = true; }
+        try {
+            const state = vm.$store && vm.$store.state;
+            const home = homeComponent();
+            if (state && state.projectInfo) {
+                result.projectId = typeof state.projectInfo.projectId === "string" ? state.projectInfo.projectId : null;
+            } else if (home) {
+                result.projectId = typeof home.projectId === "string" ? home.projectId : null;
+            }
+            if (state && state.userInfo) {
+                result.loggedIn = typeof state.userInfo.token === "string" && !!state.userInfo.token.trim();
+            } else if (home) {
+                result.loggedIn = typeof home.token === "string" && !!home.token.trim();
+            }
+        } catch (_) { /* Status is deliberately limited to non-secret readiness fields. */ }
+        return result;
+    }
+    function assertUploadAllowed(component) {
+        if (destroyed) reject("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+        let projectId;
+        try {
+            const value = component == null ? {} : Object(component);
+            const hasShort = "projectId" in value, hasLong = "projectID" in value;
+            if (hasShort && hasLong && value.projectId !== value.projectID) {
+                reject("LANHU_PROJECT_CONFLICT", "蓝湖项目配置冲突，请重新选择测试项目。");
+            }
+            projectId = hasShort ? value.projectId : hasLong ? value.projectID : undefined;
+        }
+        catch (cause) {
+            if (ownErrors.has(cause)) throw cause;
+            reject("LANHU_PROJECT_UNAVAILABLE", "无法读取蓝湖项目，请重新选择测试项目。", cause);
+        }
+        if (projectId !== TEST_PROJECT_ID) {
+            reject("LANHU_PROJECT_NOT_ALLOWED", "仅允许向隔离测试项目上传，请在蓝湖工具中选择测试项目。");
+        }
+    }
+    function track(target, type, callback, options) {
+        target.addEventListener(type, callback, options);
+        listeners.push({ target, type, callback, options });
+    }
+    function untrack(target, type, callback, options) {
+        target.removeEventListener(type, callback, options);
+        for (let index = listeners.length - 1; index >= 0; index--) {
+            const item = listeners[index];
+            if (item.target === target && item.type === type && item.callback === callback && item.options === options) listeners.splice(index, 1);
+        }
+    }
+    async function removePhotoshopListener(item) {
+        item.cancelled = true;
+        if (!item.added || item.removed) return;
+        if (item.removing) return item.removing;
+        item.removing = Promise.resolve().then(() => item.action.removeNotificationListener(item.events, item.registeredCallback)).then(() => {
+            item.removed = true;
+            photoshopListeners.delete(item);
+        }).catch(cause => {
+            item.removing = null;
+            throw error("LANHU_NOTIFICATION_CLEANUP_FAILED", "蓝湖通知清理失败，请重新加载插件。", cause);
+        });
+        return item.removing;
+    }
+    function clearTimer(item) {
+        item.clear(item.id);
+        timers.delete(item);
+    }
+    async function cleanup() {
+        epoch++;
+        const failures = [];
+        for (const item of listeners.splice(0)) {
+            try { item.target.removeEventListener(item.type, item.callback, item.options); } catch (cause) { failures.push(cause); }
+        }
+        for (const item of timers) {
+            try { clearTimer(item); } catch (cause) { failures.push(cause); }
+        }
+        const removals = [];
+        for (const item of photoshopListeners) removals.push(removePhotoshopListener(item));
+        if (shadow) {
+            try { shadow.textContent = ""; } catch (cause) { failures.push(cause); }
+        }
+        for (const result of await Promise.allSettled(removals)) if (result.status === "rejected") failures.push(result.reason);
+        if (failures.length) throw error("LANHU_CLEANUP_FAILED", "蓝湖运行环境清理失败，请重新加载插件。", failures[0]);
+    }
+    async function hostContext() {
+        await cleanup();
+        if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+        const contextEpoch = epoch;
+        const active = () => !destroyed && epoch === contextEpoch;
+        const mount = document.getElementById("lanhuMount");
+        if (!mount || typeof mount.attachShadow !== "function") {
+            reject("LANHU_SHADOW_UNAVAILABLE", "当前宿主不支持隔离蓝湖界面，请使用官方蓝湖面板。");
+        }
+        if (!shadow) {
+            if (mount.shadowRoot) reject("LANHU_MOUNT_IN_USE", "蓝湖界面挂载区已被占用，请重新加载插件。");
+            shadow = mount.attachShadow({ mode: "open" });
+        }
+        const style = document.createElement("style");
+        style.textContent = ":host { display: block; width: 100%; min-height: 632px; } [data-gameui-lanhu-body] { width: 100%; min-height: 632px; font-size: 12px; }";
+        shadow.appendChild(style);
+        const body = document.createElement("div"); body.setAttribute("data-gameui-lanhu-body", "");
+        const app = document.createElement("div"); app.setAttribute("id", "app");
+        body.appendChild(app); shadow.appendChild(body);
+        let scopedWindow;
+        function schedule(kind, callback, delay, ...args) {
+            if (!active()) return null;
+            if (typeof callback !== "function") throw error("LANHU_TIMER_INVALID", "蓝湖计时任务无效，请重新连接工具。");
+            const startName = kind === "timeout" ? "setTimeout" : kind === "interval" ? "setInterval" : "requestAnimationFrame";
+            const clearName = kind === "timeout" ? "clearTimeout" : kind === "interval" ? "clearInterval" : "cancelAnimationFrame";
+            if (typeof window[startName] !== "function" || typeof window[clearName] !== "function") {
+                throw error("LANHU_TIMER_UNAVAILABLE", "当前宿主缺少蓝湖运行所需的计时接口。");
+            }
+            const item = { kind, id: null, epoch: contextEpoch, clear: window[clearName].bind(window) };
+            const invoke = (...nativeArgs) => {
+                if (kind !== "interval") timers.delete(item);
+                if (active()) callback.apply(scopedWindow, kind === "animation" ? nativeArgs : args);
+            };
+            timers.add(item);
+            try { item.id = kind === "animation" ? window[startName](invoke) : window[startName](invoke, delay); }
+            catch (cause) { timers.delete(item); throw error("LANHU_TIMER_FAILED", "蓝湖计时任务启动失败。", cause); }
+            return item.id;
+        }
+        function cancelTimer(id, animation = false) {
+            for (const item of timers) {
+                if (item.epoch === contextEpoch && item.id === id && (animation ? item.kind === "animation" : item.kind !== "animation")) clearTimer(item);
+            }
+        }
+        const timerFunctions = {
+            setTimeout: (callback, delay, ...args) => schedule("timeout", callback, delay, ...args),
+            clearTimeout: id => cancelTimer(id),
+            setInterval: (callback, delay, ...args) => schedule("interval", callback, delay, ...args),
+            clearInterval: id => cancelTimer(id)
+        };
+        if (typeof window.requestAnimationFrame === "function" && typeof window.cancelAnimationFrame === "function") {
+            timerFunctions.requestAnimationFrame = callback => schedule("animation", callback);
+            timerFunctions.cancelAnimationFrame = id => cancelTimer(id, true);
+        }
+        let photoshopProxy;
+        function scopedRequire(name) {
+            if (name !== "photoshop") return nativeRequire(name);
+            if (photoshopProxy) return photoshopProxy;
+            const original = nativeRequire(name), action = original && original.action;
+            if (!action) throw error("LANHU_PHOTOSHOP_UNAVAILABLE", "蓝湖 Photoshop 模块连接失败。");
+            const sameEvents = (left, right) => {
+                if (Array.isArray(left) && Array.isArray(right)) return left.length === right.length && left.every((value, index) => value === right[index]);
+                return left === right;
+            };
+            const actionProxy = new Proxy(Object.create(null), {
+                get(_, key) {
+                    if (key === "addNotificationListener") return async (events, callback) => {
+                        if (!active()) return;
+                        if (typeof callback !== "function") throw error("LANHU_NOTIFICATION_INVALID", "蓝湖通知回调无效，请重新连接工具。");
+                        const item = { events: Array.isArray(events) ? events.slice() : events, callback, action, epoch: contextEpoch,
+                            added: false, removed: false, removing: null, cancelled: false };
+                        item.registeredCallback = function (...args) { if (active() && !item.cancelled) return callback.apply(this, args); };
+                        photoshopListeners.add(item);
+                        try {
+                            await action.addNotificationListener(events, item.registeredCallback);
+                            item.added = true;
+                            if (!active() || item.cancelled) await removePhotoshopListener(item);
+                        } catch (cause) {
+                            if (!item.added) photoshopListeners.delete(item);
+                            if (ownErrors.has(cause)) throw cause;
+                            throw error("LANHU_NOTIFICATION_FAILED", "蓝湖通知注册失败，请重新连接工具。", cause);
+                        }
+                    };
+                    if (key === "removeNotificationListener") return async (events, callback) => {
+                        const matches = Array.from(photoshopListeners).filter(item => item.epoch === contextEpoch && item.action === action && item.callback === callback && sameEvents(item.events, events));
+                        await Promise.all(matches.map(removePhotoshopListener));
+                    };
+                    const value = Reflect.get(action, key, action);
+                    return typeof value === "function" ? value.bind(action) : value;
+                },
+                has(_, key) { return Reflect.has(action, key); }
+            });
+            photoshopProxy = new Proxy(Object.create(null), {
+                get(_, key) {
+                    if (key === "action") return actionProxy;
+                    const value = Reflect.get(original, key, original);
+                    return typeof value === "function" ? value.bind(original) : value;
+                },
+                has(_, key) { return Reflect.has(original, key); }
+            });
+            return photoshopProxy;
+        }
+        const localDocument = new Map();
+        const specialSelector = selector => selector === "head" ? shadow : selector === "body" || selector === "html" ? body : null;
+        const scopedDocument = new Proxy(Object.create(null), {
+            get(_, key) {
+                const target = document;
+                if (key === "head") return shadow;
+                if (key === "body" || key === "documentElement") return body;
+                if (key === "defaultView") return scopedWindow;
+                if (key === "querySelector") return selector => specialSelector(selector) || shadow.querySelector(selector);
+                if (key === "querySelectorAll") return selector => {
+                    const special = specialSelector(selector); return special ? [special] : shadow.querySelectorAll(selector);
+                };
+                if (key === "getElementById") return id => {
+                    if (typeof shadow.getElementById === "function") return shadow.getElementById(String(id));
+                    return Array.from(shadow.querySelectorAll("[id]")).find(node => node.getAttribute("id") === String(id)) || null;
+                };
+                if (key === "addEventListener") return (type, callback, options) => { if (active()) track(shadow, type, callback, options); };
+                if (key === "removeEventListener") return (type, callback, options) => untrack(shadow, type, callback, options);
+                if (localDocument.has(key)) return localDocument.get(key);
+                const value = Reflect.get(target, key, target);
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+            set(_, key, value) { localDocument.set(key, value); return true; },
+            has(_, key) {
+                return localDocument.has(key) || ["head", "body", "documentElement", "defaultView", "querySelector", "querySelectorAll", "getElementById", "addEventListener", "removeEventListener"].includes(key) || Reflect.has(document, key);
+            }
+        });
+        const localWindow = new Map();
+        scopedWindow = new Proxy(Object.create(null), {
+            get(_, key) {
+                const target = window;
+                if (key === "document") return scopedDocument;
+                if (key === "window" || key === "self" || key === "globalThis") return scopedWindow;
+                if (key === "VM") return localWindow.get(key);
+                if (Object.prototype.hasOwnProperty.call(timerFunctions, key)) return timerFunctions[key];
+                if (key === "addEventListener") return (type, callback, options) => { if (active()) track(target, type, callback, options); };
+                if (key === "removeEventListener") return (type, callback, options) => untrack(target, type, callback, options);
+                if (localWindow.has(key)) return localWindow.get(key);
+                const value = Reflect.get(target, key, target);
+                if (typeof key === "string" && /^[A-Z]/.test(key)) return value;
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+            set(_, key, value) { localWindow.set(key, value); return true; },
+            has(_, key) {
+                if (key === "VM") return localWindow.has(key);
+                return localWindow.has(key) || Object.prototype.hasOwnProperty.call(timerFunctions, key) ||
+                    ["document", "window", "self", "globalThis"].includes(key) || Reflect.has(window, key);
+            }
+        });
+        return { document: scopedDocument, window: scopedWindow, localStorage: window.localStorage,
+            require: scopedRequire, assertUploadAllowed, ...timerFunctions,
+            runModal(action) {
+                if (destroyed) reject("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+                if (typeof action !== "function") reject("LANHU_MODAL_INVALID", "蓝湖导出任务无效，请重新连接工具。");
+                return ps.core.executeAsModal(action, { commandName: "蓝湖导出" });
+            } };
+    }
+    async function connect() {
+        ready();
+        if (vm) return status();
+        operation = "connect";
+        try {
+            if (typeof nativeRequire !== "function") throw error("LANHU_REQUIRE_UNAVAILABLE", "蓝湖原生模块连接缺失，请重新构建集成包。");
+            const context = await hostContext();
+            if (!runtimeFactory) runtimeFactory = await loadRuntime();
+            if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+            if (typeof runtimeFactory !== "function") throw error("LANHU_RUNTIME_INVALID", "蓝湖运行模块无效，请重新构建集成包。");
+            const instance = await runtimeFactory(context);
+            if (destroyed) {
+                if (instance && typeof instance.$destroy === "function") await instance.$destroy();
+                await cleanup();
+                throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+            }
+            if (!instance || typeof instance !== "object") throw error("LANHU_RUNTIME_INVALID", "蓝湖界面未完成初始化，请重新连接工具。");
+            vm = instance;
+            notify("蓝湖工具已加载，请登录并选择测试项目。");
+            return status();
+        } catch (cause) {
+            let cleanupCause;
+            try { await cleanup(); } catch (failure) { cleanupCause = failure; }
+            const failure = ownErrors.has(cause) ? cause : error("LANHU_CONNECT_FAILED", "蓝湖工具连接失败，请检查候选包后重试。", cause);
+            if (cleanupCause) Object.defineProperty(failure, "cleanupCause", { value: cleanupCause });
+            if (!ownErrors.has(cause)) notify(failure.message);
+            throw failure;
+        } finally { operation = null; }
+    }
+    async function upload() {
+        ready();
+        if (!vm) reject("LANHU_NOT_CONNECTED", "请先连接蓝湖工具、登录并选择测试项目。");
+        operation = "upload";
+        try {
+            const home = homeComponent();
+            if (!home) reject("LANHU_HOME_UNAVAILABLE", "请在蓝湖工具中返回项目页面后再上传。");
+            let loggedIn;
+            try { loggedIn = typeof home.token === "string" && !!home.token.trim(); }
+            catch (cause) { reject("LANHU_AUTH_UNAVAILABLE", "无法读取蓝湖登录状态，请重新登录。", cause); }
+            if (!loggedIn) reject("LANHU_LOGIN_REQUIRED", "请先在蓝湖工具中登录。");
+            assertUploadAllowed(home);
+            await home.uploadArtboard();
+            if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
+            notify("已交给蓝湖上传流程，请在蓝湖工具中查看后续结果。");
+            return { ...status(), uploading: pipelineBusy() };
+        } catch (cause) {
+            if (ownErrors.has(cause)) throw cause;
+            reject("LANHU_UPLOAD_FAILED", "蓝湖上传流程未能启动，请在蓝湖工具中检查状态。", cause);
+        } finally { operation = null; }
+    }
+    async function destroy() {
+        if (destroyed) { await cleanup(); return; }
+        destroyed = true;
+        const instance = vm; vm = null;
+        let failure;
+        try { if (instance && typeof instance.$destroy === "function") await instance.$destroy(); }
+        catch (cause) { failure = error("LANHU_DESTROY_FAILED", "蓝湖界面清理失败，请重新加载插件。", cause); }
+        try { await cleanup(); }
+        catch (cause) {
+            if (failure) Object.defineProperty(failure, "cleanupCause", { value: cause });
+            else failure = cause;
+        }
+        if (failure) throw failure;
+    }
+    async function openOfficial() {
+        reject("LANHU_OFFICIAL_OPEN_UNAVAILABLE", "当前构建尚未接入打开官方蓝湖面板，请从 Photoshop 增效工具菜单打开。");
+    }
+    return { connect, upload, status, destroy, openOfficial };
+}
+
+module.exports = { createLanhuHost };

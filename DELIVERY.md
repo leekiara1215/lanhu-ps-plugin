@@ -77,6 +77,8 @@ Panel staging 必须包含 manifest.json、index.html、panel.css、panel.js、R
 以及 manifest.main 指向的实际文件；manifest 需使用独立插件 ID 和 Photoshop host。panelIncluded 必须为布尔值，并与目录和文件清单一致。
 构建时与安装读取时使用同一套完整校验；缺文件搭配 null 哈希仍明确拒绝，不会继续写入入口。CLI 禁止产生 Python bytecode 缓存污染包清单。
 
+0.6.0页签版另需 `lanhu-host.js`、`gameui-export.js`，基础构建共10文件；旧8文件候选仍兼容。可用 `Panel/build-panel.cjs <新绝对路径> --official-plugin <白名单原版绝对路径>` 构建12文件集成候选，在staging增加 `lanhu-runtime.js` / `lanhu-runtime.json`。此可选输出按用户要求携带从已校验原包生成的Vue运行时，不入git，也不改实装包；其来源SHA、生成SHA、测试项目及API版本由清单核对。归档/安装拒绝依赖缺失、运行时/身份单边缺失或身份不符。该集成界面与原官方目录的两处seam安装是独立入口，不能将内嵌模块加载当成适配器实装成功。
+
 ZIP 是可审查的交付归档，解压为目录后调用随包 CLI；不是已验证的 CCX 安装器，不应改名冒充 CCX。
 不含 Panel 时 `panelIncluded=false`，这时只提供上传适配器；不能据此声称面板安装成功。
 

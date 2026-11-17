@@ -6,7 +6,25 @@
 node Panel/build-panel.cjs /absolute/new-or-empty/staging/GameUIAuthoring
 ```
 
-输出为自包含插件目录，包含 `manifest.json`、面板 HTML/CSS/JS、原样复制的 `gameui-core.js`、`gameui-ps.js`、`gameui-authoring.js`。由交付安装脚本负责归档/安装；构建器拒绝覆盖非空目录。开发加载入口为输出目录的 `manifest.json`，Photoshop >=25.0，UXP API 2。本面板不改官方蓝湖插件。Node 构建和测试不启动 PS/Unity。
+输出为自包含插件目录，包含 `manifest.json`、面板 HTML/CSS/JS、`lanhu-host.js`、README，以及原样复制的 `gameui-core.js`、`gameui-ps.js`、`gameui-authoring.js`、`gameui-export.js`，基础构建共10文件。由交付安装脚本负责归档/安装；构建器拒绝覆盖非空目录。开发加载入口为输出目录的 `manifest.json`，Photoshop >=25.0，UXP API 2。本面板不改官方蓝湖插件。Node 构建和测试不启动 PS/Unity。
+
+## 资源创作与蓝湖工具页签
+
+顶部可切换“资源创作 / 蓝湖工具”，切换不重置名称、资源选择和目标尺寸。带蓝湖运行时的候选在蓝湖页点击“加载蓝湖工具”后挂载原版 Vue 界面，可通过该界面登录、选择团队/项目、设计倍数/画板并进入上传与切图等原版流程。云端服务仍由蓝湖提供，不是自建蓝湖后台。
+
+资源创作页有登录/项目状态和实际上传快捷入口，还可点击“在本页展开蓝湖工具”直接使用同一蓝湖界面。两个位置移动同一个挂载节点，复用同一会话和项目状态，不创建第二个登录实例。内联展开时上传进度保留在当前页；普通快捷上传进入蓝湖页显示后续结果。面板仅提示“已交给上传流程”，不把入口返回当作云端成功。官方上传进行时阻止资源创作写入PSD。
+
+蓝湖界面使用 Shadow DOM 隔离。仅在加载时启动；缺隔离支持明确拒绝并保留“打开官方蓝湖面板”入口。销毁时清理所跟踪的定时器、窗口事件、Photoshop通知与Vue挂载；该机制不是权限沙箱，也不保证取消已发出的网络请求。API 2 适配在解析与切图的公共入口进入 modal，不更改冻结 gameUI 契约。当前所有集成上传只允许测试项目 `cfea1199-7c07-48d9-86ef-cdbd3385c237`，并兼容官方配置的 projectId/projectID 两种拼写且拒绝冲突。
+
+### 构建带蓝湖功能的候选
+
+```sh
+node Panel/build-panel.cjs /absolute/new/staging/GameUIIntegrated --official-plugin /absolute/pinned/original/lanhu
+```
+
+输入须是 `compatibility.json` 白名单的原版 manifest/index，构建前逐字节核对SHA；已安装增强包、未知版本/同版本异字节均拒绝，失败不创建staging。构建仅在新输出中生成 `lanhu-runtime.js` 和带原包/生成文件哈希的 `lanhu-runtime.json`，不将官方代码写入源码仓，不修改实装目录。包含蓝湖时共12文件；基础10文件候选没有内置蓝湖界面，仍可通过IPC打开已有官方面板。
+
+完整集成候选在 staging manifest 增加 network.domains=`all`（原版服务动态返回OSS端点）及 http/https 外部打开权限，基础构建不增加网络权限。登录使用当前独立插件自己的存储，不读取或复制官方插件的私有登录数据。候选尚未证明实际PS中的Shadow CSS/弹层、登录回调、切图/上传和云端回取兼容；真实宿主、网络及Unity仍交总控验证，不将离线测试当作正式替代蓝湖插件通过。
 
 ## 日常操作
 

@@ -355,9 +355,13 @@ test("explicit transparent source canvas keeps 64x48 dimensions around 60x44 con
 async function panelHarness(catalogText, initialMetadata, startup = {}) {
     class Element {
         constructor(tag) { this.tag = tag; this.children = []; this.value = ""; this.listeners = {}; this.style = {}; this._text = ""; }
-        set textContent(value) { this._text = value; this.children = []; if (this.tag === "select") this.value = ""; }
+        set textContent(value) { this._text = value; for (const child of this.children) child.parentNode = null; this.children = []; if (this.tag === "select") this.value = ""; }
         get textContent() { return this._text; }
-        appendChild(child) { this.children.push(child); if (this.tag === "select" && this.children.length === 1) this.value = child.value; }
+        appendChild(child) {
+            if (child.parentNode) child.parentNode.children = child.parentNode.children.filter(item => item !== child);
+            child.parentNode = this; this.children.push(child);
+            if (this.tag === "select" && this.children.length === 1) this.value = child.value;
+        }
         setAttribute(name, value) { this[name] = value; }
         getAttribute(name) { return this[name] === undefined ? null : this[name]; }
         addEventListener(name, callback) { this.listeners[name] = callback; }
@@ -440,12 +444,16 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         document: { getElementById(id) { assert.ok(elements[id], id); return elements[id]; }, createElement(tag) { return new Element(tag); },
             querySelectorAll(tag) {
                 const all = Object.values(elements);
-                for (let i = 0; i < all.length; i++) all.push(...all[i].children);
+                const seen = new Set(all);
+                for (let i = 0; i < all.length; i++) for (const child of all[i].children) {
+                    if (!seen.has(child)) { seen.add(child); all.push(child); }
+                }
                 return all.filter(element => element.tag === tag);
             } },
         console, require(name) {
             if (name === "photoshop") return env.photoshop; if (name === "uxp") return uxp;
             if (name === "./gameui-ps.js") return env.store; if (name === "./gameui-authoring.js") return author;
+            if (name === "./lanhu-host.js") return startup.lanhuHost ? { createLanhuHost: startup.lanhuHost } : require("./Panel/lanhu-host.js");
             if (name === "./gameui-core.js") return core; throw new Error(name);
         }
     });
@@ -1039,4 +1047,48 @@ test("inline resource rows cannot change the chosen version while primary action
     env.chooseResource("ui.other@1");
     assert.equal(env.chosenResource(), "ui.other@1");
     assert.equal((await env.metadata()).nodes[10].assetRef, ref, "Choosing another row alone must not write a binding.");
+});
+
+test("tool tabs preserve authoring inputs and share one inline Lanhu mount and actual upload connection", async () => {
+    const state = { connected: false, uploading: false, loggedIn: false, projectId: null };
+    let connections = 0, uploads = 0, destroyed = 0;
+    const env = await panelHarness(undefined, undefined, { lanhuHost: ({ onStatus }) => ({
+        status: () => state,
+        async connect() { connections++; state.connected = true; state.loggedIn = true; state.projectId = "cfea1199-7c07-48d9-86ef-cdbd3385c237"; onStatus("connected"); },
+        async upload() { uploads++; onStatus("handed to official upload"); },
+        async destroy() { destroyed++; }
+    }) });
+    assert.equal(env.elements.authoringUploadLanhu.disabled, true, "Generic refresh completion must not enable an unconnected upload action.");
+    env.elements.displayName.value = "正在创作的名称"; env.elements.targetWidth.value = "192";
+    await env.click("tabLanhu");
+    assert.equal(env.elements.lanhuPane.style.display, "block"); assert.equal(env.elements.authoringPane.style.display, "none");
+    assert.equal(env.elements.tabLanhu.getAttribute("aria-selected"), "true");
+    await env.click("connectLanhu"); assert.equal(connections, 1);
+    await env.click("tabAuthoring");
+    assert.equal(env.elements.displayName.value, "正在创作的名称"); assert.equal(env.elements.targetWidth.value, "192");
+    assert.equal(env.elements.authoringUploadLanhu.disabled, false);
+    await env.click("authoringToggleLanhu");
+    assert.equal(env.elements.lanhuMount.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(connections, 1, "Moving the same mount must not create another login/session instance.");
+    await env.click("authoringUploadLanhu"); assert.equal(uploads, 1);
+    assert.equal(env.elements.lanhuMount.parentNode, env.elements.authoringLanhuInline);
+    await env.click("tabLanhu");
+    assert.equal(env.elements.lanhuMount.parentNode, env.elements.lanhuFullMount);
+    await env.click("tabAuthoring");
+    assert.equal(env.elements.lanhuMount.parentNode, env.elements.authoringLanhuInline);
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined); assert.equal(env.state.history.length, 0);
+    await env.entrypoints.value.plugin.destroy(); assert.equal(destroyed, 1);
+});
+
+test("official upload progress blocks authoring writes and a failed Lanhu connection leaves upload disabled", async () => {
+    const state = { connected: true, uploading: true, loggedIn: true, projectId: "test" };
+    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => state,
+        async connect() { throw new Error("controlled connection failure"); }, async destroy() {} }) });
+    await env.click("primaryAction");
+    assert.match(env.elements.status.textContent, /蓝湖上传尚在进行/);
+    assert.equal(env.state.history.length, 0); assert.equal(await env.metadata(), null);
+    state.connected = false; state.uploading = false;
+    await env.click("connectLanhu");
+    assert.match(env.elements.lanhuStatus.textContent, /controlled connection failure/);
+    assert.equal(env.elements.authoringUploadLanhu.disabled, true);
 });

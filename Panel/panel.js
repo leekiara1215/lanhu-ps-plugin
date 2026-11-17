@@ -3,6 +3,7 @@ const ps = require("photoshop");
 const uxp = require("uxp");
 const store = require("./gameui-ps.js");
 const author = require("./gameui-authoring.js");
+const { createLanhuHost } = require("./lanhu-host.js");
 const fs = uxp.storage.localFileSystem;
 const $ = id => document.getElementById(id);
 let catalog = author.createMetadata();
@@ -24,6 +25,83 @@ let editRevision = 0;
 let resourceChoice = null;
 const fieldEdits = new Map();
 const selectionEvents = ["select", "open", "close"];
+let lanhuBusy = false;
+let lanhuHost;
+let activeTab = "authoring";
+let inlineLanhuOpen = false;
+
+function lanhuMessage(message) {
+    $("lanhuStatus").textContent = message;
+    $("authoringLanhuStatus").textContent = message;
+}
+function updateLanhuControls(syncStatus = false) {
+    const state = lanhuHost && lanhuHost.status();
+    $("authoringUploadLanhu").disabled = busy || lanhuBusy || !state || !state.connected || state.uploading || !state.loggedIn;
+    $("connectLanhu").disabled = busy || lanhuBusy;
+    if (syncStatus && state && state.connected && !lanhuBusy) {
+        lanhuMessage(state.loggedIn ? "蓝湖已登录；当前项目：" + (state.projectId || "尚未选择") : "蓝湖已加载，请在蓝湖工具页登录并选择测试项目。");
+    }
+}
+function showTab(name) {
+    activeTab = name;
+    $("authoringPane").style.display = name === "authoring" ? "block" : "none";
+    $("lanhuPane").style.display = name === "lanhu" ? "block" : "none";
+    $("tabAuthoring").setAttribute("aria-selected", name === "authoring" ? "true" : "false");
+    $("tabLanhu").setAttribute("aria-selected", name === "lanhu" ? "true" : "false");
+    positionLanhuMount();
+    updateLanhuControls(true);
+}
+function positionLanhuMount() {
+    const destination = $(activeTab === "authoring" && inlineLanhuOpen ? "authoringLanhuInline" : "lanhuFullMount");
+    const mount = $("lanhuMount");
+    if (mount.parentNode !== destination) destination.appendChild(mount);
+}
+lanhuHost = createLanhuHost({ ps, uxp, document, window: typeof window === "undefined" ? {} : window,
+    nativeRequire: require,
+    loadRuntime() {
+        try { return require("./lanhu-runtime.js"); }
+        catch (cause) {
+            const error = new Error("当前候选未包含蓝湖工具，请使用带蓝湖功能的集成候选。");
+            Object.defineProperty(error, "cause", { value: cause }); throw error;
+        }
+    }, onStatus: lanhuMessage });
+async function connectLanhu() {
+    if (busy || lanhuBusy) return;
+    lanhuBusy = true; updateLanhuControls();
+    try {
+        await lanhuHost.connect(); $("lanhuSetup").style.display = "none";
+    } catch (error) { lanhuMessage(error.message); }
+    finally { lanhuBusy = false; updateLanhuControls(); }
+}
+async function uploadLanhu() {
+    if (busy || lanhuBusy) return;
+    lanhuBusy = true; updateLanhuControls();
+    try { await lanhuHost.upload(); if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); }
+    catch (error) { if (!inlineLanhuOpen || activeTab !== "authoring") showTab("lanhu"); lanhuMessage(error.message); }
+    finally { lanhuBusy = false; updateLanhuControls(); }
+}
+$("tabAuthoring").addEventListener("click", () => showTab("authoring"));
+$("tabLanhu").addEventListener("click", () => showTab("lanhu"));
+$("authoringOpenLanhu").addEventListener("click", () => showTab("lanhu"));
+$("authoringToggleLanhu").addEventListener("click", async () => {
+    inlineLanhuOpen = !inlineLanhuOpen;
+    $("authoringLanhuInline").style.display = inlineLanhuOpen ? "block" : "none";
+    $("authoringToggleLanhu").textContent = inlineLanhuOpen ? "收起本页蓝湖工具" : "在本页展开蓝湖工具";
+    positionLanhuMount();
+    if (inlineLanhuOpen && !lanhuHost.status().connected) await connectLanhu();
+    updateLanhuControls(true);
+});
+$("connectLanhu").addEventListener("click", connectLanhu);
+$("authoringUploadLanhu").addEventListener("click", uploadLanhu);
+$("openLanhuOfficial").addEventListener("click", async () => {
+    try {
+        if (!uxp.pluginManager) throw new Error("当前宿主未提供插件通信，请从增效工具菜单打开蓝湖。");
+        const plugin = Array.from(await uxp.pluginManager.getPlugins()).find(item => item.id === "com.lanhu.ps");
+        if (!plugin) throw new Error("没有找到已安装的官方蓝湖插件。");
+        await plugin.showPanel("showlanhu");
+    } catch (error) { lanhuMessage(error.message); }
+});
+showTab("authoring");
 
 function displayText(value) {
     return String(value).replace(/[A-Za-z0-9._@:/-]{24,}/g, token => token.match(/.{1,20}/g).join("\n"));
@@ -266,12 +344,13 @@ async function refresh() {
 }
 
 async function run(action) {
-    if (busy) return;
+    if (busy || lanhuBusy) return;
+    if (lanhuHost.status().uploading) { status("蓝湖上传尚在进行，请完成后再修改资源或PSD。"); return; }
     busy = true;
     for (const button of document.querySelectorAll("button")) button.disabled = true;
     try { const result = await action(); if (action !== refresh) await refresh(); if (typeof result === "string") status(result); }
     catch (error) { status(String(error.message || error)); }
-    finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; }
+    finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; updateLanhuControls(); }
 }
 function bind(id, action) {
     $(id).addEventListener("click", () => run(async () => {
@@ -466,6 +545,7 @@ async function registerSelectionEvents() {
 }
 uxp.entrypoints.setup({ plugin: { create() { destroyed = false; }, async destroy() {
     destroyed = true;
+    await lanhuHost.destroy();
     if (listenerRegistered) await ps.action.removeNotificationListener(selectionEvents, onSelectionEvent);
 } }, panels: { gameuiAuthoring: { show() { if (!busy) run(refresh); } } } });
 (async () => {
