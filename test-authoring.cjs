@@ -470,9 +470,14 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
     await new Promise(resolve => setImmediate(resolve));
     return { ...env, elements, file, releaseCatalog, entrypoints, documentEvents,
         async notify(name = "select") { if (notification) await notification(name, {}); },
+        selectParts(id) {
+            const [trigger, menu] = elements[id].children;
+            const [viewport, rail] = menu.children;
+            return { trigger, menu, viewport, rail, thumb: rail.children[0], list: viewport.children[0] };
+        },
         async click(id) { await elements[id].listeners.click(); },
         async chooseSelect(id, value) {
-            const [trigger, list] = elements[id].children;
+            const { trigger, list } = this.selectParts(id);
             if (trigger.getAttribute("aria-expanded") !== "true") await trigger.listeners.click();
             const option = list.children.find(row => row.getAttribute("data-value") === value);
             assert.ok(option, id + " option " + value); return option.listeners.click();
@@ -1157,7 +1162,7 @@ test("native Lanhu workspace renders real lists and wires account, selection and
     assert.equal(env.elements.lanhuLogin.style.display, "none");
     assert.equal(env.elements.lanhuAccountSummary.textContent, "美术");
     await env.chooseSelect("lanhuTeam", "team");
-    assert.equal(env.elements.lanhuProject.children[1].children.find(item => item.getAttribute("data-value") === "other").getAttribute("aria-disabled"), "true");
+    assert.equal(env.selectParts("lanhuProject").list.children.find(item => item.getAttribute("data-value") === "other").getAttribute("aria-disabled"), "true");
     await env.chooseSelect("lanhuProject", project);
     await env.chooseSelect("lanhuDevice", "Web");
     assert.equal(view.deviceScale, "@1x");
@@ -1222,7 +1227,7 @@ test("custom buttons retain mouse and keyboard activation, ARIA and hard disable
 test("custom pickers preserve exact values, keyboard selection and cancel without native select chrome or PSD writes", async () => {
     const state = { connected: true, loggedIn: false, uploading: false, projectId: null };
     const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => state, async destroy() {} }) });
-    const [trigger, list] = env.elements.sampling.children;
+    const { trigger, list } = env.selectParts("sampling");
     assert.equal(env.elements.sampling.tag, "div"); assert.equal(trigger.getAttribute("role"), "combobox");
     assert.equal(trigger.getAttribute("aria-expanded"), "false"); assert.equal(env.elements.sampling.value, "Bilinear");
     const key = (key, repeat = false) => trigger.listeners.keydown({ key, repeat, preventDefault() {} });
@@ -1263,6 +1268,46 @@ test("custom picker stays open on unchanged state and refuses disabled fields or
     view.uploading = true; changed(); await teamTrigger.listeners.click();
     assert.equal(teamTrigger.getAttribute("aria-expanded"), "false");
     assert.equal(teamTrigger.getAttribute("tabindex"), "-1");
+    assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
+});
+
+test("picker rail scrolls clipped content with wheel, drag, paging and keys without native scrollTop", async () => {
+    const view = { connected: true, loggedIn: true, uploading: false, teams: Array.from({ length: 15 }, (_, i) => ({ id: "team-" + i, name: "团队 " + i })), projects: [], groups: [], scales: {} };
+    const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => view, workspace: () => view, async destroy() {} }) });
+    const { trigger, menu, viewport, list, rail, thumb } = env.selectParts("lanhuTeam");
+    list.scrollHeight = 480;
+    Object.defineProperty(viewport, "scrollTop", { get: () => 0, set() {} });
+    viewport.getBoundingClientRect = () => ({ top: 0, bottom: 160 });
+    rail.getBoundingClientRect = () => ({ top: 0 });
+    list.children.forEach((row, index) => { row.getBoundingClientRect = () => ({ top: index * 30 + (parseFloat(list.style.top) || 0), bottom: (index + 1) * 30 + (parseFloat(list.style.top) || 0) }); });
+    const event = values => ({ target: list.children[1], preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...values });
+    await trigger.listeners.click();
+    assert.equal(viewport.style.height, "160px"); assert.equal(rail.style.display, "block");
+    assert.equal(rail.getAttribute("aria-valuemax"), "320");
+    const wheel = event({ type: "wheel", deltaY: 60 }); menu.listeners.wheel(wheel);
+    assert.equal(list.style.top, "-60px"); assert.equal(wheel.stopped, true);
+    env.elements.panelViewport.listeners.wheel(wheel);
+    assert.equal(parseFloat(env.elements.panelContent.style.top), 0, "The same gesture must not move the outer panel.");
+    menu.listeners.mousewheel(event({ type: "mousewheel", wheelDelta: -60 }));
+    assert.equal(list.style.top, "-60px", "A legacy duplicate must not scroll twice.");
+    rail.listeners.keydown(event({ target: rail, key: "End" }));
+    assert.equal(list.style.top, "-320px"); assert.equal(thumb.style.marginTop, "104px");
+    const boundary = event({ type: "wheel", deltaY: 30 }); menu.listeners.wheel(boundary);
+    assert.equal(boundary.stopped, undefined, "At the boundary the outer panel may consume the wheel.");
+    rail.listeners.mousedown(event({ target: thumb, button: 0, clientY: 100 }));
+    env.documentEvents.mousemove(event({ clientY: 48 }));
+    assert.equal(list.style.top, "-160px"); assert.equal(rail.getAttribute("data-dragging"), "true");
+    env.documentEvents.mouseup(); assert.equal(env.documentEvents.mousemove, undefined);
+    rail.listeners.mousedown(event({ target: rail, button: 0, clientY: 0 }));
+    assert.equal(list.style.top, "-16px");
+    trigger.listeners.keydown(event({ key: "End" }));
+    assert.equal(list.style.top, "-320px", "Keyboard highlighting reveals the final option.");
+    list.scrollHeight = 90; env.elements.panelViewport.listeners.scroll();
+    assert.equal(list.style.top, "0px"); assert.equal(rail.style.display, "none"); assert.equal(viewport.style.height, "90px");
+    list.scrollHeight = 480; env.elements.panelViewport.listeners.scroll();
+    rail.listeners.mousedown(event({ target: thumb, button: 0, clientY: 20 }));
+    await env.entrypoints.value.plugin.destroy();
+    assert.equal(menu.style.display, "none"); assert.equal(env.documentEvents.mousemove, undefined); assert.equal(env.documentEvents.mouseup, undefined);
     assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
 });
 

@@ -74,7 +74,9 @@ let openedSelect = null;
 function closeSelectMenus() { if (openedSelect) openedSelect.close(); }
 function makeSelect(id, rows, selected = "") {
     const element = $(id), trigger = document.createElement("div"), caption = document.createElement("span"), arrow = document.createElement("span"), list = document.createElement("div");
+    const menu = document.createElement("div"), viewport = document.createElement("div"), rail = document.createElement("div"), thumb = document.createElement("div");
     let choices = [], value = "", disabled = false, expanded = false, active = -1;
+    let offset = 0, drag = null, lastWheelAt = 0;
     const callbacks = [];
     trigger.className = "ui-select-trigger"; trigger.setAttribute("role", "combobox");
     trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-controls", id + "-options");
@@ -82,7 +84,87 @@ function makeSelect(id, rows, selected = "") {
     caption.className = "ui-select-caption"; arrow.className = "ui-select-arrow"; arrow.setAttribute("aria-hidden", "true");
     trigger.appendChild(caption); trigger.appendChild(arrow);
     list.className = "ui-select-list"; list.setAttribute("id", id + "-options"); list.setAttribute("role", "listbox");
-    element.appendChild(trigger); element.appendChild(list);
+    menu.className = "ui-select-menu"; viewport.className = "ui-select-viewport";
+    viewport.setAttribute("id", id + "-viewport");
+    rail.className = "ui-select-scrollbar"; thumb.className = "ui-select-thumb";
+    rail.setAttribute("role", "scrollbar"); rail.setAttribute("aria-label", trigger.getAttribute("aria-label") + "列表滚动");
+    rail.setAttribute("aria-controls", id + "-viewport"); rail.setAttribute("aria-orientation", "vertical"); rail.setAttribute("aria-valuemin", "0");
+    viewport.appendChild(list); rail.appendChild(thumb); menu.appendChild(viewport); menu.appendChild(rail);
+    element.appendChild(trigger); element.appendChild(menu);
+    // Avoid host-painted scrollbars and UXP's unreliable hidden scrollTop.
+    // Move the option content and the light thumb from the same bounded offset.
+    function metrics() {
+        const content = Math.max(list.scrollHeight || 0, list.offsetHeight || 0);
+        const height = Math.min(160, content), maximum = Math.max(0, content - height);
+        const track = Math.max(0, height - 4), size = maximum ? Math.min(track, Math.max(24, track * height / content)) : track;
+        return { height, maximum, size, travel: track - size };
+    }
+    function refreshScroll() {
+        if (!expanded) return;
+        let m = metrics();
+        rail.style.display = m.maximum > 0 ? "block" : "none";
+        m = metrics(); // The rail can change wrapping and therefore content height.
+        offset = Math.max(0, Math.min(m.maximum, offset));
+        viewport.style.height = m.height + "px";
+        rail.style.height = m.height + "px";
+        rail.setAttribute("tabindex", m.maximum ? "0" : "-1");
+        rail.setAttribute("aria-disabled", m.maximum ? "false" : "true");
+        rail.setAttribute("aria-valuemax", String(Math.round(m.maximum)));
+        rail.setAttribute("aria-valuenow", String(Math.round(offset)));
+        list.style.top = -offset + "px";
+        thumb.style.height = m.size + "px";
+        thumb.style.marginTop = (m.maximum ? offset / m.maximum * m.travel : 0) + "px";
+    }
+    function scrollTo(top) { offset = Math.max(0, Math.min(metrics().maximum, top)); refreshScroll(); }
+    function revealActive() {
+        const option = list.children[active];
+        if (!option || typeof option.getBoundingClientRect !== "function" || typeof viewport.getBoundingClientRect !== "function") return;
+        const item = option.getBoundingClientRect(), box = viewport.getBoundingClientRect();
+        if (item.top < box.top) scrollTo(offset + item.top - box.top);
+        else if (item.bottom > box.bottom) scrollTo(offset + item.bottom - box.bottom);
+    }
+    function endDrag() {
+        drag = null; rail.setAttribute("data-dragging", "false");
+        document.removeEventListener("mousemove", moveDrag); document.removeEventListener("mouseup", endDrag);
+        if (typeof window !== "undefined") window.removeEventListener("blur", endDrag);
+    }
+    function moveDrag(event) {
+        if (!drag || !Number.isFinite(event.clientY)) return;
+        const m = metrics();
+        if (m.travel > 0) scrollTo(drag.top + (event.clientY - drag.y) / m.travel * m.maximum);
+        event.preventDefault();
+    }
+    rail.addEventListener("mousedown", event => {
+        if (!expanded || destroyed || (event.button !== undefined && event.button !== 0) || !Number.isFinite(event.clientY)) return;
+        const m = metrics(); if (!m.maximum) return;
+        event.preventDefault(); event.stopPropagation();
+        if (typeof rail.focus === "function") rail.focus();
+        if (event.target !== thumb) {
+            const top = rail.getBoundingClientRect().top + 2 + offset / m.maximum * m.travel;
+            scrollTo(offset + (event.clientY < top ? -1 : 1) * m.height * .9); return;
+        }
+        drag = { y: event.clientY, top: offset }; rail.setAttribute("data-dragging", "true");
+        document.addEventListener("mousemove", moveDrag); document.addEventListener("mouseup", endDrag);
+        if (typeof window !== "undefined") window.addEventListener("blur", endDrag);
+    });
+    function onWheel(event) {
+        if (!expanded || destroyed || event.ctrlKey || event.metaKey) return;
+        if (event.type === "mousewheel" && Date.now() - lastWheelAt < 32) { event.preventDefault(); event.stopPropagation(); return; }
+        const delta = Number.isFinite(event.deltaY) ? event.deltaY : -(event.wheelDeltaY || event.wheelDelta || 0);
+        if (!Number.isFinite(delta) || !delta) return;
+        if (event.type === "wheel") lastWheelAt = Date.now();
+        const m = metrics(), previous = offset;
+        scrollTo(offset + delta * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? m.height : 1));
+        if (offset !== previous) { event.preventDefault(); event.stopPropagation(); }
+    }
+    menu.addEventListener("wheel", onWheel); menu.addEventListener("mousewheel", onWheel);
+    rail.addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
+        if (event.key === "Tab") { close(); return; }
+        const m = metrics(), destinations = { ArrowUp: offset - 30, ArrowDown: offset + 30, PageUp: offset - m.height * .9, PageDown: offset + m.height * .9, Home: 0, End: m.maximum };
+        if (!expanded || !Object.prototype.hasOwnProperty.call(destinations, event.key)) return;
+        event.preventDefault(); event.stopPropagation(); scrollTo(destinations[event.key]);
+    });
     function paint() {
         const current = choices.find(row => row.id === value);
         caption.textContent = current ? current.name : "请选择";
@@ -91,7 +173,7 @@ function makeSelect(id, rows, selected = "") {
         trigger.setAttribute("aria-disabled", disabled ? "true" : "false");
         trigger.setAttribute("tabindex", disabled ? "-1" : "0");
         element.setAttribute("aria-disabled", disabled ? "true" : "false");
-        list.style.display = expanded ? "block" : "none";
+        menu.style.display = expanded ? "flex" : "none";
         for (let index = 0; index < list.children.length; index++) {
             list.children[index].setAttribute("aria-selected", choices[index].id === value ? "true" : "false");
             list.children[index].setAttribute("data-active", index === active ? "true" : "false");
@@ -100,6 +182,7 @@ function makeSelect(id, rows, selected = "") {
     }
     function close(focus = false) {
         const wasExpanded = expanded;
+        endDrag();
         expanded = false; if (openedSelect === control) openedSelect = null; paint();
         if (wasExpanded) scheduleInputClipping();
         if (focus && typeof trigger.focus === "function") trigger.focus();
@@ -110,7 +193,7 @@ function makeSelect(id, rows, selected = "") {
         expanded = true; openedSelect = control;
         active = choices.findIndex(row => row.id === value && !row.disabled);
         if (active < 0) active = choices.findIndex(row => !row.disabled);
-        paint(); scheduleInputClipping();
+        paint(); refreshScroll(); revealActive(); scheduleInputClipping();
     }
     function choose(index) {
         if (!expanded || disabled || destroyed || !choices[index] || choices[index].disabled) return;
@@ -123,16 +206,11 @@ function makeSelect(id, rows, selected = "") {
         if (!enabled.length) return;
         active = end === "first" ? enabled[0] : end === "last" ? enabled[enabled.length - 1] : enabled[(enabled.indexOf(active) + direction + enabled.length) % enabled.length];
         paint();
-        const option = list.children[active];
-        if (option && typeof option.getBoundingClientRect === "function" && typeof list.getBoundingClientRect === "function") {
-            const item = option.getBoundingClientRect(), box = list.getBoundingClientRect();
-            if (item.top < box.top) list.scrollTop -= box.top - item.top;
-            else if (item.bottom > box.bottom) list.scrollTop += item.bottom - box.bottom;
-        }
+        revealActive();
     }
-    const control = { element, close, onChange(callback) { callbacks.push(callback); },
+    const control = { element, close, refreshScroll, onChange(callback) { callbacks.push(callback); },
         setChoices(next, selectedValue) {
-            close(); choices = next.map(row => ({ id: String(row.id), name: String(row.name), disabled: !!row.disabled }));
+            close(); offset = 0; choices = next.map(row => ({ id: String(row.id), name: String(row.name), disabled: !!row.disabled }));
             list.textContent = "";
             choices.forEach((row, index) => {
                 const option = document.createElement("div"); option.className = "ui-select-option"; option.textContent = row.name;
@@ -213,7 +291,7 @@ function scrollPanelTo(top) {
     scheduleInputClipping();
 }
 function onPanelWheel(event) {
-    if (event.ctrlKey || event.metaKey) return;
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
     // Photoshop hosts can expose either wheel API. Ignore the legacy duplicate
     // when both are emitted for the same gesture.
     if (event.type === "mousewheel" && Date.now() - lastStandardWheelAt < 32) return;
@@ -222,8 +300,7 @@ function onPanelWheel(event) {
     if (event.type === "wheel") lastStandardWheelAt = Date.now();
     // Let a list consume its own wheel movement before scrolling the whole panel.
     for (let node = event.target; node && node !== scrollViewport; node = node.parentNode) {
-        const classes = String(node.className || "").split(/\s+/);
-        if (node.id !== "resources" && node.id !== "lanhuBoardList" && !classes.includes("ui-select-list")) continue;
+        if (node.id !== "resources" && node.id !== "lanhuBoardList") continue;
         const top = node.scrollTop || 0, maximum = (node.scrollHeight || 0) - (node.clientHeight || 0);
         if (maximum > 0 && (delta < 0 ? top > 0 : top < maximum)) return;
     }
@@ -367,10 +444,11 @@ function updateInputClipping() {
 }
 function scheduleInputClipping() {
     if (destroyed) return;
+    if (openedSelect) openedSelect.refreshScroll();
     updateScrollbar();
     updateInputClipping();
     if (clippingFrame !== null || !hostWindow || typeof hostWindow.requestAnimationFrame !== "function") return;
-    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; updateScrollbar(); updateInputClipping(); });
+    clippingFrame = hostWindow.requestAnimationFrame(() => { clippingFrame = null; if (openedSelect) openedSelect.refreshScroll(); updateScrollbar(); updateInputClipping(); });
 }
 function onOutsideSelectClick(event) {
     if (openedSelect && !openedSelect.element.contains(event.target)) closeSelectMenus();
