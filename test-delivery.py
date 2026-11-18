@@ -247,6 +247,22 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "output exists"):
             delivery.build_bundle(first, "test-1", panel)
 
+    def test_lanhu_panel_dependency_and_runtime_identity_rejections_preserve_plugin(self):
+        panel = self.panel_staging()
+        (panel / "panel.js").write_text('require("./lanhu-host.js");')
+        with self.assertRaisesRegex(ValueError, "Lanhu host dependencies"):
+            delivery.build_bundle(self.root / "missing-host", "missing-host", panel)
+        self.assertEqual(tree_hashes(self.plugin), self.before)
+        for name in ("lanhu-host.js", "gameui-export.js"):
+            (panel / name).write_text("Synthetic host dependency")
+        (panel / "lanhu-runtime.js").write_text("Synthetic runtime; not executed")
+        with self.assertRaisesRegex(ValueError, "runtime/identity pair"):
+            delivery.build_bundle(self.root / "missing-identity", "missing-identity", panel)
+        (panel / "lanhu-runtime.json").write_text(json.dumps({"schemaVersion": 1, "runtimeSha256": "0" * 64}))
+        with self.assertRaisesRegex(ValueError, "runtime identity"):
+            delivery.build_bundle(self.root / "bad-identity", "bad-identity", panel)
+        self.assertEqual(tree_hashes(self.plugin), self.before)
+
     def test_null_or_malformed_checksums_and_missing_files_refused_without_plugin_changes(self):
         for index, checksum in enumerate((None, True, 123, "", "a" * 63, "A" * 64, "g" * 64)):
             with self.subTest(checksum=checksum):

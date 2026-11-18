@@ -251,6 +251,23 @@ def load_bundle(bundle):
                 not panel_manifest["id"].strip() or panel_manifest["id"] == patch.COMPATIBILITY["official"]["id"] or
                 not isinstance(panel_manifest.get("host"), dict) or panel_manifest["host"].get("app") != "PS"):
             raise ValueError("Panel main file, independent plugin ID or Photoshop host is invalid.")
+        if b'require("./lanhu-host.js")' in read(bundle / "Panel/panel.js"):
+            if not {"Panel/lanhu-host.js", "Panel/gameui-export.js"}.issubset(panel_names):
+                raise ValueError("Panel Lanhu host dependencies are incomplete.")
+        integrated_files = {"Panel/lanhu-runtime.js", "Panel/lanhu-runtime.json"}
+        if integrated_files & panel_names:
+            if not integrated_files.issubset(panel_names):
+                raise ValueError("Panel Lanhu runtime/identity pair is incomplete.")
+            identity = json.loads(read(bundle / "Panel/lanhu-runtime.json"))
+            official = patch.COMPATIBILITY["official"]
+            if (not isinstance(identity, dict) or identity.get("schemaVersion") != 1 or
+                    identity.get("officialIndexSha256") != official["indexSha256"] or
+                    identity.get("officialManifestSha256") != official["manifestSha256"] or
+                    identity.get("projectId") != patch.COMPATIBILITY["projectId"] or
+                    identity.get("runtimeSha256") != files["Panel/lanhu-runtime.js"] or
+                    panel_manifest.get("host", {}).get("data", {}).get("apiVersion") != 2 or
+                    not {"Panel/lanhu-host.js", "Panel/gameui-export.js"}.issubset(panel_names)):
+                raise ValueError("Panel Lanhu runtime identity or dependencies are invalid.")
     elif panel_names or (bundle / "Panel").exists():
         raise ValueError("Bundle contains Panel files while panelIncluded is false.")
     manifest["bundleId"] = patch.sha(encoded(manifest))

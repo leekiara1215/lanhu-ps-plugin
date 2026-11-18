@@ -8,12 +8,11 @@
 ## 两部分入口
 
 - 独立 Panel：A 维护资源目录、实例和本地 XMP，通过 `authoring.sources[assetRef]` 提供 1× 8-bit RGBA PNG。
-- 上传适配器：B 的 `capture/finalize` 在既有官方导出后注入源节点，由同一次官方上传填回 URL。
-  只改官方入口的两处 seam，保留官方上传和序列化。源节点仅存在于 payload，PSD 不必摆放源小图。
+- 上传适配器在原版读取 PSD 图层树后核对选传范围。`capture/finalize` 为标记画板注入源节点，由同一次原版上传填回 URL。源节点仅存在于 payload，PSD 不必摆放源小图。
 
 读取的官方 1.0.32 包 manifestVersion=4、Photoshop apiVersion=1，仅声明 `showlanhu` 面板，无上传 command 入口。
 Adobe 的 IPC 支持调用另一插件显式暴露的 command/panel，不能凭空拦截其私有上传流程。
-因此独立 Panel 负责创作，受保护的两处适配器负责官方上传接入。本版本不另造上传服务，也不改变主路线。
+独立 Panel 负责创作，受项目门禁保护的适配器接入原版上传和序列化流程。
 
 依据：[Adobe IPC](https://developer.adobe.com/uxp/guides/how-to/inter-plugin-comm/)。
 
@@ -76,6 +75,8 @@ python3 -B gameui-delivery.py build --output '/绝对路径/新目录/gameui-tes
 Panel staging 必须包含 manifest.json、index.html、panel.css、panel.js、README.md、gameui-core.js、gameui-ps.js、gameui-authoring.js 八个文件，
 以及 manifest.main 指向的实际文件；manifest 需使用独立插件 ID 和 Photoshop host。panelIncluded 必须为布尔值，并与目录和文件清单一致。
 构建时与安装读取时使用同一套完整校验；缺文件搭配 null 哈希仍明确拒绝，不会继续写入入口。CLI 禁止产生 Python bytecode 缓存污染包清单。
+
+0.6.17 的面板构建包含 Adobe CCX 所需图标。可用 `Panel/build-panel.cjs <新绝对路径> --official-plugin <白名单原版绝对路径>` 生成集成版，并在 staging 中生成 `lanhu-runtime.js` 和 `lanhu-runtime.json`。原包来源 SHA、生成 SHA、测试项目及 API 版本由清单核对。内嵌运行时和原版目录适配器分别安装、分别验收。
 
 ZIP 是可审查的交付归档，解压为目录后调用随包 CLI；不是已验证的 CCX 安装器，不应改名冒充 CCX。
 不含 Panel 时 `panelIncluded=false`，这时只提供上传适配器；不能据此声称面板安装成功。
