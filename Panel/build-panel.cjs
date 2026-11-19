@@ -12,11 +12,27 @@ if (fs.existsSync(target) && fs.readdirSync(target).length) throw new Error("Sta
 // Validate the complete optional input before writing anything to staging.
 const integrated = extra.length ? require("./build-lanhu-runtime.cjs").prepareRuntime(extra[1]) : null;
 fs.mkdirSync(target, { recursive: true });
-const files = ["manifest.json", "index.html", "panel.css", "panel.js", "lanhu-host.js", "README.md"];
-for (const file of files) fs.copyFileSync(path.join(__dirname, file), path.join(target, file));
+const files = ["manifest.json", "index.html", "panel.css", "panel.js", "lanhu-host.js", "README.md", "icons/plugin.png", "icons/panel.png"];
+function collectModules(directory) {
+    return fs.readdirSync(path.join(__dirname, directory), { withFileTypes: true }).flatMap(entry => {
+        const relative = path.join(directory, entry.name);
+        if (entry.isDirectory()) return collectModules(relative);
+        return entry.isFile() && entry.name.endsWith(".js") ? [relative] : [];
+    }).sort();
+}
+
+for (const directory of ["adapters", "application", "domain", "ui", "workspaces"]) files.push(...collectModules(directory));
+for (const file of files) {
+    const destination = path.join(target, file);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(__dirname, file), destination);
+}
 const shared = ["gameui-core.js", "gameui-ps.js", "gameui-authoring.js", "gameui-export.js"];
 for (const file of shared) fs.copyFileSync(path.join(__dirname, "..", file), path.join(target, file));
 if (integrated) {
+    const entry = path.join(target, "index.html");
+    const html = fs.readFileSync(entry, "utf8");
+    fs.writeFileSync(entry, html.replace('data-lanhu-runtime="excluded"', 'data-lanhu-runtime="included"'));
     fs.writeFileSync(path.join(target, "lanhu-runtime.js"), integrated.runtime);
     fs.writeFileSync(path.join(target, "lanhu-runtime.json"), JSON.stringify(integrated.identity, null, 2) + "\n");
     const manifest = JSON.parse(fs.readFileSync(path.join(target, "manifest.json")));

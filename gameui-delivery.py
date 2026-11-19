@@ -10,6 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
+import posixpath
 import shutil
 import sys
 import tempfile
@@ -26,6 +27,7 @@ NAMES = ("index.js",) + MODULES
 DELIVERY_FILES = MODULES + ("build-audit-patch.py", "gameui-delivery.py", "compatibility.json", "DELIVERY.md")
 PANEL_FILES = ("manifest.json", "index.html", "panel.css", "panel.js", "README.md",
                "gameui-core.js", "gameui-ps.js", "gameui-authoring.js")
+PANEL_REQUIRE = re.compile(rb"""\brequire\(\s*["'](\.{1,2}/[a-zA-Z0-9._/-]+\.js)["']\s*\)""")
 
 
 def encoded(value):
@@ -209,6 +211,27 @@ def safe_bundle_path(name):
     return path
 
 
+def validate_panel_modules(bundle, panel_names):
+    pending = ["Panel/panel.js"]
+    visited = set()
+    while pending:
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        if name == "Panel/lanhu-host.js" and "Panel/gameui-export.js" not in panel_names:
+            raise ValueError("Panel Lanhu host dependencies are incomplete: Panel/gameui-export.js")
+        for relative in PANEL_REQUIRE.findall(read(bundle / name)):
+            dependency = posixpath.normpath(posixpath.join(posixpath.dirname(name), relative.decode("ascii")))
+            if dependency == "Panel/lanhu-runtime.js":
+                continue  # The optional integrated runtime has its own identity check.
+            if dependency not in panel_names:
+                if dependency in {"Panel/lanhu-host.js", "Panel/gameui-export.js"}:
+                    raise ValueError("Panel Lanhu host dependencies are incomplete: " + dependency)
+                raise ValueError("Panel module dependency missing: " + dependency)
+            pending.append(dependency)
+
+
 def load_bundle(bundle):
     manifest_bytes = read(bundle / "bundle.json")
     if manifest_bytes is None:
@@ -251,9 +274,7 @@ def load_bundle(bundle):
                 not panel_manifest["id"].strip() or panel_manifest["id"] == patch.COMPATIBILITY["official"]["id"] or
                 not isinstance(panel_manifest.get("host"), dict) or panel_manifest["host"].get("app") != "PS"):
             raise ValueError("Panel main file, independent plugin ID or Photoshop host is invalid.")
-        if b'require("./lanhu-host.js")' in read(bundle / "Panel/panel.js"):
-            if not {"Panel/lanhu-host.js", "Panel/gameui-export.js"}.issubset(panel_names):
-                raise ValueError("Panel Lanhu host dependencies are incomplete.")
+        validate_panel_modules(bundle, panel_names)
         integrated_files = {"Panel/lanhu-runtime.js", "Panel/lanhu-runtime.json"}
         if integrated_files & panel_names:
             if not integrated_files.issubset(panel_names):

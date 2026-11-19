@@ -1,6 +1,15 @@
 "use strict";
 
+const { sliceFrameDraft, validSliceDimension } = require("./domain/parameters.js");
+
 const TEST_PROJECT_ID = "cfea1199-7c07-48d9-86ef-cdbd3385c237";
+const BOARD_FAILURES = new Map([
+    ["画板导出失败", "画板导出失败"],
+    ["token获取失败", "无法取得文件上传授权"],
+    ["数据解析失败", "画板数据处理失败"],
+    ["文件传输失败", "画板文件传输失败"]
+]);
+const SLICE_HELP_URL = "https://support.lanhuapp.com/503e/9784/f5e6/98b1#header-0";
 
 function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire, onStatus = () => {}, onChange = () => {} }) {
     let vm = null;
@@ -9,6 +18,13 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     let runtimeFactory = null;
     let runtimeRoot = null;
     let epoch = 0;
+    let pendingUploadScope = null;
+    let uploadAnalysisFailed = false;
+    let uploadBatch = null;
+    let uploadPrecheckMessage = "";
+    let artboardsKey, artboardRead;
+    const uploadIssues = new WeakMap();
+    const hiddenSliceDocuments = new Set();
     const listeners = [];
     const timers = new Set();
     const photoshopListeners = new Set();
@@ -85,25 +101,110 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
         }
     }
 
-    function workspace() {
+    function childLayers(layer) {
+        return Array.from(layer?.layers || layer?.children || []);
+    }
+    function sliceRegions() {
+        const pending = childLayers(ps.app?.activeDocument);
+        const guides = [];
+        while (pending.length) {
+            const layer = pending.pop();
+            if (layer.name === "-slice-") guides.push(layer);
+            else pending.push(...childLayers(layer));
+        }
+        return guides;
+    }
+    function sliceSelection() {
+        const doc = ps.app?.activeDocument;
+        const layers = Array.from(doc?.activeLayers || []);
+        const selectedIds = new Set(layers.map(layer => layer.id ?? layer._id).filter(id => id != null));
+        const markers = new Map();
+        let nested = false;
+        function containsSlice(layer) {
+            return /^-[hs]-/.test(layer.name) || childLayers(layer).some(containsSlice);
+        }
+        for (const layer of layers) {
+            const name = layer.name;
+            const parent = layer.parent;
+            const marker = /^-[hs]-/.test(name) ? layer : parent?.name?.startsWith("-s-") ? parent : null;
+            if (marker) markers.set(marker.id ?? marker._id, marker);
+            for (let parent = layer.parent; parent; parent = parent.parent) {
+                if (/^-[hs]-/.test(parent.name) || selectedIds.has(parent.id ?? parent._id)) nested = true;
+            }
+            if (name === "-slice-" || childLayers(layer).some(containsSlice)) nested = true;
+        }
+        const first = layers[0];
+        const bounds = first && ((first.layers?.length && first.boundsNoEffects) || first.bounds);
+        const width = Math.trunc(bounds?.width || bounds?.right - bounds?.left) || 0;
+        const height = Math.trunc(bounds?.height || bounds?.bottom - bounds?.top) || 0;
+        const canMark = layers.length > 0 && !nested && markers.size === 0;
+        const canFrame = layers.length > 0 && !nested && [...markers.values()].every(layer => layer.name.startsWith("-h-"));
+        return { layers, markers: [...markers.values()], canMark, canFrame, width, height };
+    }
+    function sliceView() {
+        try {
+            const { layers, markers, canMark, canFrame, width, height } = sliceSelection();
+            const guides = sliceRegions();
+            return { ids: layers.map(layer => layer.id ?? layer._id), canMark, canFrame, marked: markers.length, width, height,
+                regionsVisible: guides.length ? guides.some(layer => layer.visible) : !hiddenSliceDocuments.has(currentDocumentId()),
+                mode: markers.length === 1 ? (markers[0].name.startsWith("-s-") ? "frame" : "tight") : "mixed" };
+        } catch (_) { return null; }
+    }
+    function progressComponent() {
+        const route = vm?.$router?.currentRoute || vm?.$route;
+        if (route && route.name !== "upload") return null;
+        return components().find(item => typeof item.uploadArtboards === "function" && item.UploadStatusConfig) || null;
+    }
+    function uploadRows(progress, phase) {
+        const rows = new Map();
+        const add = (items, state) => {
+            for (const item of Array.isArray(items) ? items : []) {
+                if (item?.id == null) continue;
+                const id = String(item.id).toUpperCase();
+                const row = { id, name: String(item.name || rows.get(id)?.name || "未命名画板"), state };
+                if (state === "fail" && BOARD_FAILURES.has(item.message)) row.reason = BOARD_FAILURES.get(item.message);
+                rows.set(id, row);
+            }
+        };
+        add(progress.artboardPoolList, phase === "uploading" ? "pending" : "unknown");
+        add(progress.unChangeList, "unchanged");
+        add(progress.successList, phase === "uploading" ? "prepared" : phase === "blocked" ? "unsubmitted" : phase === "unknown" ? "unknown" : "success");
+        add(progress.failList, "fail");
+        return [...rows.values()];
+    }
+    function workspace({ includeSlice = true } = {}) {
         const state = vm && vm.$store && vm.$store.state || {};
         const user = state.userInfo || {}, project = state.projectInfo || {}, setting = state.setting || {};
-        const boards = state.artboards || {}, services = vm && vm.$gameuiServices;
+        const artboardsPending = artboardsKey !== activeArtboardsKey();
+        const boards = artboardsPending ? {} : state.artboards || {}, services = vm && vm.$gameuiServices;
         const list = values => (Array.isArray(values) ? values : []).map(item => ({ id: String(item.id), name: String(item.name || item.label || "未命名") }));
-        const progress = components().find(item => typeof item.uploadArtboards === "function" && item.UploadStatusConfig);
+        const progress = progressComponent();
         let upload = null;
         if (progress) {
             const config = progress.UploadStatusConfig;
-            const phase = progress.uploadStatus === config.uploading ? "uploading" : progress.uploadStatus === config.success ? "success" : progress.uploadStatus === config.fail ? "fail" : progress.uploadStatus === config.unChange ? "unchanged" : "unknown";
+            const nativePhase = ["uploading", "success", "fail", "unChange"].find(key =>
+                config[key] !== undefined && progress.uploadStatus === config[key]) || "unknown";
+            const issue = uploadIssues.get(progress);
+            const phase = issue || (nativePhase === "unChange" ? "unchanged" : nativePhase);
             upload = { phase, percentage: Number.isFinite(progress.percentage) ? progress.percentage : 0,
-                total: Number(progress.totalCount) || 0, success: Number(progress.successCount) || 0, fail: Number(progress.failCount) || 0 };
+                total: Number(progress.totalCount) || 0, success: Number(progress.successCount) || 0, fail: Number(progress.failCount) || 0,
+                unchanged: Number(progress.unChangeCount) || 0, rows: uploadRows(progress, phase) };
+            if (uploadBatch && uploadBatch.context === uploadContext() && status().loggedIn) {
+                upload.canView = phase === "success" || phase === "unknown" || (phase === "fail" && upload.success > 0);
+                upload.canRetry = !issue && phase === "fail" &&
+                    typeof progress.continueUpload === "function" && eligibleBoards(progress.failList, item => BOARD_FAILURES.has(item.message));
+                upload.canForce = !issue && phase === "unchanged" && typeof progress.forceUpload === "function" &&
+                    eligibleBoards(progress.unChangeList, hasPreparedImage);
+            }
         }
         return { ...status(), browserAuthorizing: !!browserAuth, userName: String(user.nickname || user.name || user.email || ""),
-            teamId: String(project.teamId || ""), projectName: String(project.projectName || ""), groupId: String(project.groupId || ""),
+            teamId: String(project.teamId || ""), teamName: String(project.teamName || ""), projectName: String(project.projectName || ""),
+            groupId: String(project.groupId || ""), groupName: String(project.groupName || ""),
             teams: list(teams), projects: list(projects), groups: list(groups),
             deviceType: String(setting.deviceType || ""), deviceScale: String(setting.deviceScale || ""),
             scales: services && services.scales || {}, artboardType: Number(setting.artboardType) || 1,
-            allArtboards: list(boards.allArtboard), selectedArtboards: list(boards.selectedArtboard), upload };
+            allArtboards: list(boards.allArtboard), selectedArtboards: list(boards.selectedArtboard),
+            artboardsPending, slice: includeSlice ? sliceView() : null, upload };
     }
     function services() {
         if (!vm || !vm.$gameuiServices || !vm.$store) reject("LANHU_ADAPTER_UNAVAILABLE", "蓝湖业务模块尚未就绪，请刷新连接或使用最新集成候选。");
@@ -127,6 +228,79 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             if (state.projectInfo.projectId === TEST_PROJECT_ID) groups = await api.project.searchGroup({ teamId: state.projectInfo.teamId, projectId: TEST_PROJECT_ID, token: state.userInfo.token });
         }
         return workspace();
+    }
+    async function cancelFrame(layer) {
+        const children = childLayers(layer);
+        const guides = children.filter(child => child.name === "-slice-");
+        if (guides.some(guide => childLayers(guide).length)) {
+            throw error("LANHU_SLICE_GUIDE_INVALID", "切图辅助层包含其他图层，请在 Photoshop 中检查它的内容。");
+        }
+        // Only a recognizable Lanhu wrapper is safe to dissolve. Never delete a group.
+        if (guides.length !== 1) {
+            for (const guide of guides) await guide.delete();
+            layer.name = layer.name.slice(3);
+            return;
+        }
+        const id = layer.id ?? layer._id;
+        const container = layer.parent || ps.app.activeDocument;
+        const childIds = children.filter(child => child !== guides[0]).map(child => child.id ?? child._id);
+        const play = async command => {
+            const result = await ps.action.batchPlay([command], {});
+            if (!result.length || result[0]._obj === "error") throw error("LANHU_UNGROUP_FAILED", "Photoshop 无法解除切图组，已撤销本次操作。");
+        };
+        await guides[0].delete();
+        await play({ _obj: "select", _target: [{ _ref: "layer", _id: id }], makeVisible: false });
+        const selected = Array.from(ps.app.activeDocument.activeLayers || []);
+        if (selected.length !== 1 || (selected[0].id ?? selected[0]._id) !== id) {
+            throw error("LANHU_UNGROUP_FAILED", "无法确认要解除的切图组，已撤销本次操作。");
+        }
+        await play({ _obj: "ungroupLayersEvent", _target: [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }] });
+        const remaining = childLayers(container).map(child => child.id ?? child._id);
+        const start = remaining.indexOf(childIds[0]);
+        if (remaining.includes(id) || (childIds.length && (start < 0 || childIds.some((childId, index) => remaining[start + index] !== childId)))) {
+            throw error("LANHU_UNGROUP_FAILED", "解除切图组后无法确认原图层的位置，已撤销本次操作。");
+        }
+    }
+    async function performSlice(name, value) {
+        const native = vm.$lanhuApi;
+        if (name !== "unslice" && typeof native?.[name] !== "function") reject("LANHU_SLICE_UNAVAILABLE", "当前候选不支持此切图操作。");
+        if (currentDocumentId() == null) reject("LANHU_SLICE_DOCUMENT_REQUIRED", "请先打开 Photoshop 文档。");
+        if (name === "showSlice" || name === "hiddenSlice") {
+            await native[name]();
+            const docId = currentDocumentId();
+            if (name === "showSlice") hiddenSliceDocuments.delete(docId);
+            else hiddenSliceDocuments.add(docId);
+            notify(name === "showSlice" ? "已显示切图区域。" : "已隐藏切图区域。");
+            return;
+        }
+        const selection = sliceSelection();
+        if (name === "unslice") {
+            if (!selection.markers.length) reject("LANHU_SLICE_NOT_MARKED", "请选中已标记的图层或切图组。");
+            await runtimeContext.runModal(async () => {
+                const { markers } = sliceSelection();
+                for (const layer of markers) {
+                    if (layer.name.startsWith("-s-")) await cancelFrame(layer);
+                    else layer.name = layer.name.slice(3);
+                }
+            }, "取消蓝湖切图");
+            notify("已取消切图标记。");
+            return;
+        }
+        if (!(name === "sliceWithGroup" ? selection.canFrame : selection.canMark)) {
+            reject("LANHU_SLICE_SELECTION_INVALID", "请选择可标记且未包含其他切图的图层或图层组。");
+        }
+        const dimensions = [];
+        if (name === "sliceWithGroup") {
+            const { width, height } = sliceFrameDraft(value?.width, value?.height);
+            if (![width, height].every(validSliceDimension)) {
+                reject("LANHU_SLICE_SIZE_INVALID", "切图宽高请输入 1 至 9999 的整数像素，或留空使用图层边界。");
+            }
+            const w = Number(width || selection.width), h = Number(height || selection.height);
+            if (w > 0 && h > 0) dimensions.push(w, h);
+            else if (width || height) reject("LANHU_SLICE_SIZE_INVALID", "无法读取图层默认尺寸，请填写宽高。");
+        }
+        await native[name](...dimensions);
+        notify(name === "sliceWithGroup" ? "已创建框选切图。" : "已标记按内容切图。");
     }
     async function perform(name, value) {
         ready();
@@ -171,14 +345,21 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             } else if (name === "settings") {
                 const device = value.deviceType, scale = value.deviceScale;
                 if (![1, 2].includes(value.artboardType) || ((device || scale) && (!api.scales[device] || !api.scales[device].some(item => item.label === scale)))) reject("LANHU_SETTING_INVALID", "请选择有效的平台、设计倍数和画板范围。");
-                await vm.$store.dispatch("modifySetting", device ? { deviceType: device, deviceScale: scale, sliceScale: api.sliceScales[device][scale], artboardType: value.artboardType } : { artboardType: value.artboardType });
+                await vm.$store.dispatch("modifySetting", device ? {
+                    deviceType: device, deviceScale: scale, sliceScale: api.sliceScales[device][scale],
+                    artboardImageScale: coverScale(device, scale), artboardType: value.artboardType
+                } : { artboardType: value.artboardType });
                 await vm.$store.dispatch("refreshArtBoard");
             } else if (name === "back") {
                 await vm.$router.push({ name: "home" });
+                uploadBatch = null;
+                pendingUploadScope = null;
+            } else if (["retryUpload", "forceUpload", "viewUpload", "notifyUpload"].includes(name)) {
+                await performUploadResult(name);
+            } else if (name === "sliceHelp") {
+                await vm.$lanhuApi.openURI(SLICE_HELP_URL);
             } else if (["sliceWithLayer", "sliceWithGroup", "unslice", "showSlice", "hiddenSlice"].includes(name)) {
-                if (!vm.$lanhuApi || typeof vm.$lanhuApi[name] !== "function") reject("LANHU_SLICE_UNAVAILABLE", "当前候选不支持此切图操作。");
-                await vm.$lanhuApi[name]();
-                notify("切图操作已完成；请检查当前选层，正常保存由你决定。");
+                await performSlice(name, value);
             } else reject("LANHU_ACTION_UNKNOWN", "此操作尚未接入。");
             return workspace();
         } catch (cause) {
@@ -275,6 +456,154 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             reject("LANHU_PROJECT_NOT_ALLOWED", "仅允许向隔离测试项目上传，请在蓝湖工具中选择测试项目。");
         }
     }
+    function currentDocumentId() {
+        try {
+            const doc = ps.app.activeDocument;
+            return doc && (doc.id ?? doc._id);
+        } catch (_) { return null; }
+    }
+    function activeArtboardsKey() {
+        try {
+            const doc = ps.app?.activeDocument, id = doc?.id ?? doc?._id;
+            if (id == null) return null;
+            const selected = Array.from(doc.activeLayers || [], layer => layer.id ?? layer._id).sort();
+            return JSON.stringify([id, selected]);
+        } catch (_) { return null; }
+    }
+    function canRefreshArtboards() {
+        return !destroyed && !operation && !pipelineBusy();
+    }
+    function refreshArtboards(read, commit) {
+        if (destroyed) return Promise.resolve(false);
+        const key = activeArtboardsKey();
+        if (artboardRead?.key === key) return artboardRead.promise;
+        const job = { key }, readEpoch = epoch;
+        const isCurrent = () => !destroyed && readEpoch === epoch && artboardRead === job && activeArtboardsKey() === key;
+        // The native adapter reads all and selected boards in separate steps,
+        // using mutable fields on the adapter instance. Serialize those reads.
+        job.promise = Promise.resolve(artboardRead?.promise).then(async () => {
+            if (!isCurrent()) return false;
+            const empty = { allArtboard: [], selectedArtboard: [] };
+            let boards = empty;
+            try { if (key !== null) boards = await read(); }
+            catch (_) { boards = null; }
+            if (!isCurrent()) return false;
+            const valid = Array.isArray(boards?.allArtboard) && Array.isArray(boards?.selectedArtboard);
+            commit(valid ? boards : empty);
+            artboardsKey = valid ? key : undefined;
+            if (vm) onChange();
+            return valid;
+        }).finally(() => {
+            if (artboardRead === job) artboardRead = undefined;
+        });
+        artboardRead = job;
+        return job.promise;
+    }
+    function uploadContext() {
+        const { projectInfo: project = {}, setting = {}, userInfo = {} } = vm?.$store?.state || {};
+        const sliceScale = vm?.$gameuiServices?.sliceScales?.[setting.deviceType]?.[setting.deviceScale];
+        return JSON.stringify([project.teamId, project.projectId, project.groupId, userInfo.token,
+            setting.deviceType, setting.deviceScale, sliceScale, setting.artboardScale, setting.artboardImageScale, setting.showDDSCode]);
+    }
+    function coverScale(device, scale) {
+        return ["iOS", "Android"].includes(device) && ["@1x", "mdpi", "hdpi"].includes(scale) ? "2" : "1";
+    }
+    function boardIds(boards) {
+        return Array.isArray(boards) ? boards.map(board => String(board?.id ?? "").toUpperCase()).sort() : [];
+    }
+    function hasPreparedImage(item) {
+        return [item?.image?.sid, item?.image?.url, item?.image?.json_url].every(value => typeof value === "string" && value.length > 0);
+    }
+    function eligibleBoards(boards, eligible) {
+        const ids = boardIds(boards);
+        return !!(uploadBatch && ids.length && new Set(ids).size === ids.length &&
+            ids.every(id => uploadBatch.scope.boardIds.includes(id)) && boards.every(eligible));
+    }
+    async function performUploadResult(name) {
+        const progress = progressComponent(), result = workspace({ includeSlice: false }).upload;
+        if (!progress || !result || !uploadBatch) reject("LANHU_RESULT_UNAVAILABLE", "当前没有可操作的蓝湖上传结果。");
+        assertUploadAllowed(vm.$store.state.projectInfo);
+        if (name === "viewUpload" || name === "notifyUpload") {
+            if (!result.canView || (name === "notifyUpload" && result.phase !== "success")) {
+                reject("LANHU_RESULT_UNAVAILABLE", "当前上传状态无法执行此操作。");
+            }
+            const { projectId, teamId } = vm.$store.state.projectInfo;
+            const query = name === "viewUpload" ? "&tid=" + encodeURIComponent(teamId || "") + "&see=all" : "&see=all&is_notification=true";
+            await vm.$lanhuApi.openURI("https://lanhuapp.com/web/#/item/project/stage?pid=" + encodeURIComponent(projectId) + query);
+            return;
+        }
+        if (name === "forceUpload") {
+            if (!result.canForce) reject("LANHU_FORCE_UNAVAILABLE", "当前没有原流程可直接提交的无变化画板。");
+            uploadBatch.attempt = boardIds(progress.unChangeList);
+            await progress.forceUpload();
+            return;
+        }
+        if (!result.canRetry) reject("LANHU_RETRY_UNAVAILABLE", "当前没有可安全重试的失败画板，请先核对蓝湖结果。");
+        const ids = boardIds(progress.failList);
+        if (!await vm.$store.dispatch("refreshArtBoard")) {
+            reject("LANHU_UPLOAD_SCOPE_CHANGED", "无法确认当前文档的画板，请返回确认后重试。");
+        }
+        const scope = { documentId: uploadBatch.scope.documentId, boardIds: ids };
+        const available = new Set(boardIds(vm.$store.state.artboards.allArtboard));
+        assertScope(scope, progress.failList);
+        if (!ids.every(id => available.has(id)) || uploadBatch.context !== uploadContext() || progress !== progressComponent()) {
+            reject("LANHU_UPLOAD_SCOPE_CHANGED", "本次上传的文档、画板或去向已变化，请返回确认。");
+        }
+        uploadBatch.attempt = ids;
+        pendingUploadScope = scope;
+        uploadAnalysisFailed = false;
+        try { await progress.continueUpload(); }
+        catch (cause) { pendingUploadScope = null; throw cause; }
+    }
+    function assertUploadSubmission(progress) {
+        assertUploadAllowed(progress);
+        const ids = boardIds(progress.successList);
+        if (!uploadBatch || uploadBatch.context !== uploadContext() || !eligibleBoards(progress.successList, hasPreparedImage) ||
+            ids.some(id => !uploadBatch.attempt.includes(id))) {
+            throw error("LANHU_SUBMIT_SCOPE_CHANGED", "上传去向或提交画板已变化，已停止提交。");
+        }
+    }
+    function reportUploadSubmissionIssue(progress, cause) {
+        const blocked = ownErrors.has(cause);
+        uploadIssues.set(progress, blocked ? "blocked" : "unknown");
+        progress.stopSubmitLanhu();
+        progress.uploadStatus = progress.UploadStatusConfig.fail;
+        notify(blocked ? cause.message : "蓝湖提交结果待确认，请打开设计页核对后再操作。");
+    }
+    function reportIncompleteUpload(progress) {
+        uploadIssues.set(progress, "unknown");
+        progress.uploadStatus = progress.UploadStatusConfig.fail;
+        notify("蓝湖没有返回完整的画板结果，请打开设计页核对。");
+    }
+    function reportUploadPrecheckFailure(kind, detail) {
+        if (kind === "color") {
+            uploadPrecheckMessage = ["CMYK", "Lab"].includes(detail) ? "蓝湖不支持 " + detail + " 色彩模式。" : "蓝湖不支持当前文档的色彩模式。";
+        } else if (kind === "team") uploadPrecheckMessage = "请先加入或选择团队。";
+        else if (kind === "permission") uploadPrecheckMessage = "没有上传权限，请联系项目管理员。";
+        else if (kind === "boards") uploadPrecheckMessage = "请选中要上传的画板。";
+        else {
+            const code = String(detail ?? "");
+            const messages = vm?.$gameuiServices?.uploadErrors || {};
+            uploadPrecheckMessage = ["20005", "20006", "20007"].includes(code) ? "当前项目的设计图空间不足。" :
+                Object.prototype.hasOwnProperty.call(messages, code) ? messages[code] : "蓝湖未通过上传前检查，请检查项目权限、容量和网络。";
+        }
+    }
+    function assertScope(expected, boards) {
+        const ids = boardIds(boards);
+        if (!expected || !ids.length || new Set(ids).size !== ids.length || String(currentDocumentId()) !== String(expected.documentId) ||
+            JSON.stringify(ids) !== JSON.stringify(expected.boardIds)) {
+            throw error("LANHU_UPLOAD_SCOPE_CHANGED", "文档或画板范围已变化，请确认更新的列表后重新上传。");
+        }
+    }
+    function reportUploadAnalysisFailure(cause) {
+        if (uploadAnalysisFailed) return;
+        uploadAnalysisFailed = true;
+        pendingUploadScope = null;
+        if (ownErrors.has(cause)) notify(cause.message);
+        else if (cause && cause.code === "GAMEUI_UPLOAD_SCOPE") notify("已停止导出，请检查画板选择和图层归属。" + cause.message);
+        else if (cause && cause.code === "GAMEUI_METADATA_INVALID") notify("GameUI 文档元数据已损坏，请恢复后重新上传。");
+        else notify("蓝湖画板导出失败，请检查 Photoshop 文档和九宫格标记。");
+    }
     function track(target, type, callback, options) {
         target.addEventListener(type, callback, options);
         listeners.push({ target, type, callback, options });
@@ -305,6 +634,7 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     }
     async function cleanup() {
         epoch++;
+        artboardsKey = artboardRead = undefined;
         const failures = [];
         for (const item of listeners.splice(0)) {
             try { item.target.removeEventListener(item.type, item.callback, item.options); } catch (cause) { failures.push(cause); }
@@ -431,13 +761,14 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
                 };
                 if (key === "addEventListener") return (type, callback, options) => { if (active()) track(runtimeRoot, type, callback, options); };
                 if (key === "removeEventListener") return (type, callback, options) => untrack(runtimeRoot, type, callback, options);
+                if (key === "dispatchEvent") return event => active() && runtimeRoot.dispatchEvent(event);
                 if (localDocument.has(key)) return localDocument.get(key);
                 const value = Reflect.get(target, key, target);
                 return typeof value === "function" ? Function.prototype.bind.call(value, target) : value;
             },
             set(_, key, value) { localDocument.set(key, value); return true; },
             has(_, key) {
-                return localDocument.has(key) || ["head", "body", "documentElement", "defaultView", "querySelector", "querySelectorAll", "getElementById", "addEventListener", "removeEventListener"].includes(key) || Reflect.has(document, key);
+                return localDocument.has(key) || ["head", "body", "documentElement", "defaultView", "querySelector", "querySelectorAll", "getElementById", "addEventListener", "removeEventListener", "dispatchEvent"].includes(key) || Reflect.has(document, key);
             }
         });
         const localWindow = new Map();
@@ -465,11 +796,41 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             }
         });
         return { document: scopedDocument, window: scopedWindow, localStorage: window.localStorage,
-            require: scopedRequire, assertUploadAllowed, ...timerFunctions,
-            runModal(action) {
+            require: scopedRequire, assertUploadAllowed, assertUploadSubmission, reportUploadAnalysisFailure,
+            reportUploadSubmissionIssue, reportUploadPrecheckFailure, reportIncompleteUpload, ...timerFunctions,
+            canRefreshArtboards, refreshArtboards,
+            initSliceGuideVisibility(layer) { if (hiddenSliceDocuments.has(currentDocumentId())) layer.visible = false; },
+            checkUploadScope(boards) { assertScope(pendingUploadScope, boards); },
+            takeUploadScope(boards) {
+                assertScope(pendingUploadScope, boards);
+                const scope = pendingUploadScope;
+                pendingUploadScope = null;
+                return scope;
+            },
+            runModal(action, historyName) {
                 if (destroyed) reject("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
                 if (typeof action !== "function") reject("LANHU_MODAL_INVALID", "蓝湖导出任务无效，请重新连接工具。");
-                return ps.core.executeAsModal(action, { commandName: "蓝湖导出" });
+                if (!historyName) return ps.core.executeAsModal(action, { commandName: "蓝湖导出" });
+                const docId = currentDocumentId();
+                const selectionKey = () => {
+                    const view = sliceView();
+                    return JSON.stringify([view?.ids, view?.canMark, view?.canFrame, view?.marked, view?.mode]);
+                };
+                const selected = selectionKey();
+                return ps.core.executeAsModal(async execution => {
+                    if (String(currentDocumentId()) !== String(docId) || selectionKey() !== selected) {
+                        throw error("LANHU_SLICE_SELECTION_CHANGED", "文档或选层已变化，请确认后再操作。");
+                    }
+                    const history = await execution.hostControl.suspendHistory({ documentID: docId, name: historyName });
+                    try {
+                        const result = await action();
+                        await execution.hostControl.resumeHistory(history, true);
+                        return result;
+                    } catch (cause) {
+                        await execution.hostControl.resumeHistory(history, false);
+                        throw cause;
+                    }
+                }, { commandName: historyName });
             } };
     }
     async function connect() {
@@ -479,9 +840,14 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
         try {
             if (typeof nativeRequire !== "function") throw error("LANHU_REQUIRE_UNAVAILABLE", "蓝湖原生模块连接缺失，请重新构建集成包。");
             const context = await hostContext();
-            if (!runtimeFactory) runtimeFactory = await loadRuntime();
+            if (!runtimeFactory) {
+                let factory;
+                try { factory = await loadRuntime(); }
+                catch (cause) { throw error("LANHU_RUNTIME_LOAD_FAILED", "蓝湖运行模块加载失败，请重新安装带蓝湖功能的集成版。", cause); }
+                if (typeof factory !== "function") throw error("LANHU_RUNTIME_INVALID", "蓝湖运行模块无效，请重新安装带蓝湖功能的集成版。");
+                runtimeFactory = factory;
+            }
             if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
-            if (typeof runtimeFactory !== "function") throw error("LANHU_RUNTIME_INVALID", "蓝湖运行模块无效，请重新构建集成包。");
             const instance = await runtimeFactory(context);
             if (destroyed) {
                 if (instance && typeof instance.$destroy === "function") await instance.$destroy();
@@ -491,7 +857,13 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             if (!instance || typeof instance !== "object") throw error("LANHU_RUNTIME_INVALID", "蓝湖界面未完成初始化，请重新连接工具。");
             vm = instance;
             runtimeContext = context;
-            if (typeof context.setInterval === "function") context.setInterval(() => onChange(), 750);
+            if (typeof context.setInterval === "function") context.setInterval(() => {
+                // Some document-tab switches do not emit a Photoshop selection event.
+                if (vm?.$gameuiServices && canRefreshArtboards() && !artboardRead && artboardsKey !== activeArtboardsKey()) {
+                    void vm.$store.dispatch("refreshArtBoard");
+                }
+                onChange();
+            }, 750);
             notify("蓝湖工具已加载，请登录并选择测试项目。");
             return status();
         } catch (cause) {
@@ -499,14 +871,18 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             try { await cleanup(); } catch (failure) { cleanupCause = failure; }
             const failure = ownErrors.has(cause) ? cause : error("LANHU_CONNECT_FAILED", "蓝湖工具连接失败，请检查候选包后重试。", cause);
             if (cleanupCause) Object.defineProperty(failure, "cleanupCause", { value: cleanupCause });
-            if (!ownErrors.has(cause)) notify(failure.message);
+            notify(failure.message);
             throw failure;
         } finally { operation = null; }
     }
-    async function upload() {
+    async function upload(expected) {
         ready();
         if (!vm) reject("LANHU_NOT_CONNECTED", "请先连接蓝湖工具、登录并选择测试项目。");
         operation = "upload";
+        pendingUploadScope = null;
+        uploadAnalysisFailed = false;
+        uploadBatch = null;
+        uploadPrecheckMessage = "";
         try {
             const home = homeComponent();
             if (!home) reject("LANHU_HOME_UNAVAILABLE", "请在蓝湖工具中返回项目页面后再上传。");
@@ -516,20 +892,39 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
             if (!loggedIn) reject("LANHU_LOGIN_REQUIRED", "请先在蓝湖工具中登录。");
             assertUploadAllowed(home);
             if (vm.$gameuiServices) {
+                if (expected && !await vm.$store.dispatch("refreshArtBoard")) {
+                    reject("LANHU_UPLOAD_SCOPE_CHANGED", "无法确认当前文档的画板，请检查更新后的列表。");
+                }
                 const state = vm.$store.state, setting = state.setting || {}, boards = state.artboards || {};
                 if (!setting.deviceType || !setting.deviceScale) reject("LANHU_DESIGN_SCALE_REQUIRED", "请先选择平台与设计倍数。");
                 const selected = Number(setting.artboardType) === 2 ? boards.selectedArtboard : boards.allArtboard;
+                if (expected) {
+                    pendingUploadScope = { documentId: expected.documentId, boardIds: expected.boardIds.map(id => String(id).toUpperCase()).sort() };
+                    assertScope(pendingUploadScope, selected);
+                    assertUploadAllowed(home);
+                }
                 if (!Array.isArray(selected) || !selected.length) reject("LANHU_ARTBOARDS_REQUIRED", "当前范围没有画板，请调整选区并刷新。");
+                if (!expected && currentDocumentId() != null) {
+                    pendingUploadScope = { documentId: currentDocumentId(), boardIds: boardIds(selected) };
+                }
+                if (pendingUploadScope) {
+                    const scale = coverScale(setting.deviceType, setting.deviceScale);
+                    if (setting.artboardImageScale !== scale) await vm.$store.dispatch("modifySetting", { artboardImageScale: scale });
+                    assertScope(pendingUploadScope, selected);
+                    assertUploadAllowed(home);
+                    uploadBatch = { scope: pendingUploadScope, context: uploadContext(), attempt: pendingUploadScope.boardIds };
+                }
             }
             await home.uploadArtboard();
             if (destroyed) throw error("LANHU_HOST_DESTROYED", "蓝湖工具已关闭，请重新加载插件。");
-            if (vm.$gameuiServices && !pipelineBusy()) {
-                const dialog = components().find(item => item.dialogPluginErrVisible && typeof item.pluginErrMessage === "string");
-                reject("LANHU_UPLOAD_NOT_STARTED", dialog ? dialog.pluginErrMessage : "蓝湖尚未进入上传流程，请检查团队权限、设计倍数和画板后重试。");
+            if (vm.$gameuiServices && !pipelineBusy() && !progressComponent()) {
+                reject("LANHU_UPLOAD_NOT_STARTED", uploadPrecheckMessage || "蓝湖尚未进入上传流程，请检查团队权限、设计倍数和画板后重试。");
             }
-            notify("已交给蓝湖上传流程，请在蓝湖工具中查看后续结果。");
+            if (!uploadAnalysisFailed) notify("已交给蓝湖上传流程，请在蓝湖工具中查看后续结果。");
             return { ...status(), uploading: pipelineBusy() };
         } catch (cause) {
+            pendingUploadScope = null;
+            uploadBatch = null;
             if (ownErrors.has(cause)) throw cause;
             reject("LANHU_UPLOAD_FAILED", "蓝湖上传流程未能启动，请在蓝湖工具中检查状态。", cause);
         } finally { operation = null; }
@@ -537,6 +932,8 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     async function destroy() {
         if (destroyed) { await cleanup(); return; }
         destroyed = true;
+        pendingUploadScope = null;
+        uploadBatch = null;
         cancelBrowserAuth();
         const instance = vm; vm = null;
         let failure;
@@ -552,4 +949,4 @@ function createLanhuHost({ ps, uxp, document, window, loadRuntime, nativeRequire
     return { connect, upload, status, workspace, perform, destroy };
 }
 
-module.exports = { createLanhuHost };
+module.exports = { createLanhuHost, TEST_PROJECT_ID };

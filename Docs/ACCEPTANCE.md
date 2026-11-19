@@ -116,3 +116,17 @@ Node61/61、Python17/17、语法/diff及19项包清单通过。release=`0.6.0-te
 已用UDT加载0.6.10；真实PS28中经调试入口调用`connect`与`perform("browserAuth")`，浏览器现有会话自动授权，插件状态`connected=true/loggedIn=true/browserAuthorizing=false`，读取2个团队、5个项目，提示“已取得浏览器授权，请选择测试项目。”浮动面板不可被CUA捕获/直接操作，因此不把此证据记为按钮实际点击通过；没有上传、切图、写入或保存PSD。无打开文档时原版`getPSDName`有异常日志，未阻止上述授权与列表读取。
 
 修复候选、测试日志与脱敏核对记录：`/Users/betta/.codex/visualizations/2026/11/17/01a1e9e5-31d3-76c2-ba01-661771395b8c/lanhu-0610`，实际清单`GameUIIntegrated/manifest.json`，文件哈希与范围见`verification.json`。
+
+## 2026-11-19 模块化集成版实机回读（0.6.21）
+
+- Photoshop 2027（28.0.0）通过 UXP Developer Tools 加载集成版。使用真实 UXP 控制台触发资源和上传按钮的事件，通过 Photoshop 文件对话框导入历史 v1 目录、打开及保存测试副本。
+- 两份 2026-11-17 的历史合成 PSD 经「分配全新文档身份」隔离后，显式共用 `g-mwkenw8x-bu0gso0npyu@1`。保存重开后，A 为 184 × 46，B 为 196 × 100。两稿的文档、画板和节点身份均独立。两份原 PSD 和旧目录文件的 SHA-256 核对一致。
+- 初传失败定位为 `Invalid nine-slice instance: 3`。0.6.21 为已核实的九宫格实例生成蓝湖校验位图，沿用原生裁剪和倍率，并保留旧 PSD 图层名称。新增固定版 formatter 回归覆盖普通图层、未选画板和原有切图。
+- 两稿的 iOS @3x 和 Android xxhdpi 批次均收到成功回执。现有 Unity 读取器要求 Android xxhdpi，本次完整回读的是隔离测试项目内两稿的云端 V2。两份云端 JSON 均为 GameUI v1，身份、固定边、Point 采样、目标尺寸和实例校验图均与本地记录对应。回取的 64 × 48、1× RGBA 原图与旧目录逐像素一致。
+- Node 和 Chrome 共 144 项通过，交付测试 18 项通过。本轮覆盖上传与只读取回，实际点击浮层、Unity Prefab 生成及正式推广走各自验收。
+
+### 0.6.21 隔离试用 CCX
+
+- Adobe UXP Developer Tools 生成 `Lanhu-GameUI-Photoshop-0.6.21-test.ccx`。26 个包内文件与已验收 staging 核对一致，manifest 配置一致，运行时 SHA-256 未变。
+- macOS 使用 Adobe Unified Plugin Installer Agent 8.6.0.49 安装成功。安装清单显示 Photoshop 28 的隔离试用插件启用且版本为 0.6.21。安装文件与 CCX 逐项核对通过，Photoshop「增效工具」菜单显示 0.6.21。Windows 实装尚未验收。
+- CCX SHA-256 为 `e35c1db08b872e256cead82ac22c9a71d780852688b4ab26864d9e963d8d5a6d`。

@@ -1,40 +1,72 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><link rel="stylesheet" href="panel.css"></head>
-<body>
-<div class="app-header"><span class="app-name">资源创作 × 蓝湖</span><span class="app-version">隔离试用 · 0.6.12</span></div>
+<body id="panelFrame">
+<div class="app-header">
+<span class="app-name">蓝湖</span>
+<div id="lanhuTeam" class="ui-select" aria-label="团队" style="display: none;"></div>
+<span class="app-version">隔离试用 · 0.6.21</span>
+</div>
 <div id="panelTabs" role="tablist" aria-label="工具页签">
-<div id="tabAuthoring" role="tab" aria-selected="true" aria-controls="authoringPane" class="ui-button" tabindex="0">资源创作 · 0.6.12</div>
-<div id="tabLanhu" role="tab" aria-selected="false" aria-controls="lanhuPane" class="ui-button" tabindex="0">蓝湖工具</div>
+<div id="lanhuUploadTab" role="tab" aria-selected="true" aria-controls="lanhuUploadView" class="ui-button" tabindex="0">上传</div>
+<div id="lanhuSliceTab" role="tab" aria-selected="false" aria-controls="lanhuSliceView" class="ui-button" tabindex="0">切图</div>
+<div id="resourcesTab" role="tab" aria-selected="false" aria-controls="resourcesWorkspace" class="ui-button" tabindex="0">资源</div>
+</div>
+<div id="resourceTabs" role="tablist" aria-label="资源工具" style="display: none;">
+<div id="tabPublicResources" role="tab" aria-selected="true" aria-controls="publicResourcesPane" class="ui-button" tabindex="0">公共资源</div>
+<div id="tabAuthoring" role="tab" aria-selected="false" aria-controls="authoringPane" class="ui-button" tabindex="0">九宫格资源</div>
 </div>
 <div id="panelDivider" aria-hidden="true"></div>
 <div id="panelScroll">
 <div id="panelViewport"><div id="panelContent" class="panel-content">
-<div id="authoringPane" role="tabpanel" aria-labelledby="tabAuthoring" style="display: block;">
-<div class="page-heading"><h2>公共资源</h2><p>从源图创建资源，在不同尺寸的界面中复用。</p></div>
-<p class="scope">隔离试用：仅测试项目可上传。PSD 请正常 Cmd+S 保存。</p>
+<div id="resourcesWorkspace" role="tabpanel" aria-labelledby="resourcesTab" style="display: none;">
+<div id="publicResourcesPane" role="tabpanel" aria-labelledby="tabPublicResources" style="display: none;">
+<div class="page-heading"><h2>公共资源</h2><p>收录原始像素，供其他稿件选用。</p></div>
+<div class="workspace-card">
+<label>资源名称<input id="publicResourceName" placeholder="例如：金币图标"></label>
+<div id="collectPublicResource" class="ui-button primary-action" role="button" tabindex="0">收录选层源图</div>
+</div>
+<div class="workspace-card"><h3>资源目录</h3>
+<div id="publicResources" role="group" aria-label="公共源图版本"></div>
+<div id="exportPublicSource" class="ui-button quiet-button" role="button" tabindex="0">导出所选源 PNG</div>
+<div id="import" class="ui-button quiet-button" role="button" tabindex="0">导入目录 JSON</div>
+<div id="export" class="ui-button quiet-button" role="button" tabindex="0">导出目录 JSON</div>
+</div>
+<pre id="publicResourceStatus" role="status">资源目录正在加载，请稍候。</pre>
+</div>
+<div id="authoringPane" role="tabpanel" aria-labelledby="tabAuthoring" style="display: none;">
+<div class="page-heading"><h2>九宫格资源</h2><p>固定四边，按需要调整目标尺寸。</p></div>
 <div id="selection">选择一个普通像素层</div>
-<div class="workspace-card"><h3>资源设置</h3>
-<p class="field-label">使用资源</p>
-<div id="resources" role="group" aria-label="公共资源版本"></div>
-<p id="resourceCount">资源目录正在加载。</p>
+<div class="workspace-card"><h3 id="resourceHeading">选择资源</h3>
 <p id="inheritedContract"></p>
+<div id="toggleResourceChoices" class="ui-button quiet-button" role="button" aria-controls="resourceChoices" aria-expanded="false" tabindex="0">更换资源</div>
+<div id="resourceChoices">
+<div id="resources" role="group" aria-label="九宫格源图版本"></div>
+<p id="resourceCount">资源目录正在加载。</p>
+</div>
 <div id="newResourceSettings">
-<label>新资源名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
-<p>首次新建填写；引用现有资源自动继承。高级发布新版本时也使用以下设置。</p>
+<label id="newResourceName">新源图名称<input id="displayName" placeholder="例如：蓝色主按钮"></label>
+<p>初次配置填写固定边和采样；已有九宫格记录会自动继承。</p>
 <div class="row inset-row"><label>左边框<input id="left" type="number" min="0" value="0"></label><label>上边框<input id="top" type="number" min="0" value="0"></label><label>右边框<input id="right" type="number" min="0" value="0"></label><label>下边框<input id="bottom" type="number" min="0" value="0"></label></div>
 <label>采样<div id="sampling" class="ui-select" aria-label="采样"></div></label>
-<p>源透明留白：显式补在选层非空边界外，单位为源像素。默认 0 按非空边界采集，不猜原画布。</p>
+<div id="togglePadding" class="ui-button quiet-button" role="button" aria-controls="sourcePadding" aria-expanded="false" tabindex="0">设置源图透明留白（可选）</div>
+<div id="sourcePadding" style="display: none;">
+<p>留白加在源图非空边界外，单位为源像素；默认不补留白。</p>
 <div class="row inset-row"><label>左留白<input id="padLeft" type="number" min="0" value="0"></label><label>上留白<input id="padTop" type="number" min="0" value="0"></label><label>右留白<input id="padRight" type="number" min="0" value="0"></label><label>下留白<input id="padBottom" type="number" min="0" value="0"></label></div>
+</div>
 </div>
 </div>
 <div class="workspace-card"><h3>目标尺寸</h3>
 <div class="row"><label>目标画布宽度<input id="targetWidth" type="number" min="1" value="64"></label><label>目标画布高度<input id="targetHeight" type="number" min="1" value="48"></label></div>
 <p id="targetHint">默认取已绑定的完整目标画布，或当前选层整数非空边界；透明外沿不自动推测。</p>
+<p id="targetMinimum"></p>
 </div>
 <div class="primary-action-area">
 <div id="primaryAction" class="ui-button primary-action" role="button" tabindex="0">创建资源并应用到选层</div>
-<pre id="status" role="status"></pre>
+<div id="preview" class="ui-button quiet-button" role="button" tabindex="0">预览尺寸</div>
+<div id="previewResult" class="checker" style="display: none;"><img id="previewImage" alt="拉伸预览"></div>
+<pre id="status" role="status">资源目录正在加载，请稍候。</pre>
 </div>
+<div id="authoringBack" class="ui-button quiet-button" role="button" tabindex="0">返回上传</div>
 <div id="toggleAdvanced" class="ui-button" role="button" tabindex="0">显示高级操作</div>
 <div id="advancedPanel" style="display: none;">
 <section><h3>检查与资源版本</h3>
@@ -48,62 +80,95 @@
 <div id="copy" class="ui-button" role="button" tabindex="0">复制选层（继承引用）</div><div id="fork" class="ui-button" role="button" tabindex="0">当前文档分配全新身份</div>
 <p>任意原生复制不猜来源；显式选择资源。原生复制文档后，对副本分配全新身份。</p>
 </section>
-<section><h3>尺寸预览</h3>
-<div id="preview" class="ui-button" role="button" tabindex="0">只预览目标尺寸</div><div id="apply" class="ui-button" role="button" tabindex="0">仅应用目标尺寸到已绑定选层</div>
-<div class="checker"><img id="previewImage" alt="拉伸预览"></div>
+<section><h3>尺寸与源图</h3>
+<div id="apply" class="ui-button" role="button" tabindex="0">仅应用目标尺寸到已绑定选层</div>
 <p>预览可选。原始快照保存在 XMP；应用后仍保留源像素，不从效果图反推。最终采样表现由集成验收。</p>
 </section>
-<section><h3>资源目录</h3><div id="import" class="ui-button" role="button" tabindex="0">导入目录 JSON</div><div id="export" class="ui-button" role="button" tabindex="0">导出目录 JSON</div>
-<p>目录自动维护快照 / 版本；引用只取选定资源，不复制整个库。</p></section>
 <div id="issues"></div>
 <p>最近一次操作的原始诊断（供排查）：</p><pre id="errorDetails"></pre>
 <p class="panel-end">已到高级操作底部</p>
 </div>
 </div>
-<div id="lanhuPane" role="tabpanel" aria-labelledby="tabLanhu" style="display: none;">
+</div>
+<div id="lanhuPane" data-lanhu-runtime="excluded">
 <div id="lanhuFullMount"><div id="lanhuWorkspace" class="lanhu-workspace">
-<div class="lanhu-brand"><h2>蓝湖</h2><span id="lanhuAccountSummary">未登录</span></div>
-<p id="lanhuStatus" role="status">登录后选择团队、项目和画板。</p>
+<div id="lanhuUploadView" role="tabpanel" aria-labelledby="lanhuUploadTab">
 <div id="lanhuLogin" class="lanhu-card">
 <h3>登录蓝湖账号</h3>
 <div id="lanhuBrowserAuth" class="ui-button lanhu-primary" role="button" tabindex="0">从浏览器获取授权</div>
 <div id="lanhuCancelAuth" style="display: none;" class="ui-button" role="button" tabindex="0">取消等待授权</div>
 <p id="lanhuAuthHint">在浏览器登录蓝湖并授权，完成后将自动返回登录状态。</p>
+<div id="lanhuTogglePassword" class="ui-button quiet-button" role="button" aria-controls="lanhuPasswordForm" aria-expanded="false" tabindex="0">使用账号密码</div>
+<div id="lanhuPasswordForm" style="display: none;">
 <label>邮箱或手机号<input id="lanhuAccount" type="text" placeholder="输入蓝湖账号"></label>
 <label>密码<input id="lanhuPassword" type="password" placeholder="输入密码"></label>
 <div id="lanhuLoginAction" class="ui-button lanhu-secondary" role="button" tabindex="0">登录</div>
-<p>也可直接使用账号密码登录；浏览器授权支持沿用网页中的蓝湖登录状态。</p>
 </div>
-<div class="tool-actions lanhu-toolbar"><div id="connectLanhu" class="ui-button" role="button" tabindex="0">刷新账号与项目</div><div id="lanhuLogout" aria-disabled="true" class="ui-button" role="button" tabindex="0">退出登录</div></div>
-<div class="lanhu-card">
-<label>团队<div id="lanhuTeam" class="ui-select" aria-label="团队"></div></label>
-<label>项目<div id="lanhuProject" class="ui-select" aria-label="项目"></div></label>
-<label>分组<div id="lanhuGroup" class="ui-select" aria-label="分组"></div></label>
-<p class="lanhu-scope">隔离试用：仅测试项目可上传。</p>
 </div>
-<div class="lanhu-subtabs" role="tablist" aria-label="蓝湖功能"><div id="lanhuUploadTab" role="tab" aria-selected="true" class="ui-button" tabindex="0">上传设计</div><div id="lanhuSliceTab" role="tab" aria-selected="false" class="ui-button" tabindex="0">切图</div></div>
-<div id="lanhuUploadView">
-<div class="lanhu-card">
+<div id="lanhuReconnect" style="display: none;" class="ui-button quiet-button" role="button" tabindex="0">重新连接蓝湖</div>
+<div id="lanhuSettings" style="display: none;">
+<div class="lanhu-card lanhu-scale-row">
 <h3>设计倍数</h3>
-<div class="row"><label>平台<div id="lanhuDevice" class="ui-select" aria-label="平台"></div></label><label>设计倍数<div id="lanhuScale" class="ui-select" aria-label="设计倍数"></div></label></div>
-<h3>上传画板</h3>
-<div class="tool-actions"><div id="lanhuBoardsAll" aria-pressed="true" class="ui-button" role="button" tabindex="0">该页全部画板</div><div id="lanhuBoardsSelected" aria-pressed="false" class="ui-button" role="button" tabindex="0">选中画板</div></div>
+<div id="lanhuDevice" class="ui-select" aria-label="平台"></div>
+<div id="lanhuScale" class="ui-select" aria-label="设计倍数"></div>
+</div>
+<div class="lanhu-card">
 <p id="lanhuDocument">当前文档：未打开 PSD</p>
 <div id="lanhuBoardList" class="lanhu-board-list" role="list" aria-label="待上传画板">连接后读取当前文档画板</div>
+<div class="tool-actions lanhu-board-scope" role="group" aria-label="上传画板范围"><div id="lanhuBoardsAll" aria-pressed="true" class="ui-button" role="button" tabindex="0">全部画板</div><div id="lanhuBoardsSelected" aria-pressed="false" class="ui-button" role="button" tabindex="0">选中画板</div></div>
 </div>
-<div id="lanhuUploadAction" class="ui-button lanhu-primary" aria-disabled="true" role="button" tabindex="0">上传到蓝湖</div>
-<div id="lanhuProgress" class="lanhu-card" role="status" style="display: none;"></div>
-<div id="lanhuBack" style="display: none;" class="ui-button" role="button" tabindex="0">返回继续上传</div>
+<div class="lanhu-card lanhu-destination">
+<label>项目<div id="lanhuProject" class="ui-select" aria-label="项目"></div></label>
+<label>分组<div id="lanhuGroup" class="ui-select" aria-label="分组"></div></label>
 </div>
-<div id="lanhuSliceView" class="lanhu-card" style="display: none;">
-<h3>切图设置</h3><p>先在 Photoshop 中选择图层或图层组，再进行切图操作。切图会改变选层设置。</p>
-<div id="lanhuSliceLayer" class="ui-button" role="button" tabindex="0">标记选层为切图</div><div id="lanhuSliceGroup" class="ui-button" role="button" tabindex="0">创建切图分组</div><div id="lanhuUnslice" class="ui-button" role="button" tabindex="0">取消选层切图</div>
-<div class="tool-actions"><div id="lanhuShowSlices" class="ui-button" role="button" tabindex="0">显示切图</div><div id="lanhuHideSlices" class="ui-button" role="button" tabindex="0">隐藏切图</div></div>
+</div>
+<div id="lanhuUploadResults" class="lanhu-card" style="display: none;">
+<div id="lanhuProgress" role="status"></div>
+<div id="lanhuUploadRows" role="list" aria-label="画板上传结果"></div>
+</div>
+<p id="lanhuStatus" role="status">登录后选择团队、项目和画板。</p>
+</div>
+<div id="lanhuSliceView" role="tabpanel" aria-labelledby="lanhuSliceTab" class="lanhu-card" style="display: none;">
+<div id="lanhuSliceTools" style="display: none;">
+<p id="lanhuSliceSelection"></p>
+<div id="lanhuSliceLayer" class="ui-button lanhu-primary" role="button" tabindex="0">紧贴元素切图</div>
+<div id="lanhuUnslice" class="ui-button lanhu-cancel-mark" role="button" tabindex="0" style="display: none;">取消当前标记</div>
+<div class="lanhu-frame-row" role="group" aria-label="固定切图尺寸">
+<span>固定尺寸</span>
+<input id="lanhuSliceWidth" aria-label="框选宽度（px）" type="text" inputmode="numeric" maxlength="4" placeholder="宽">
+<span aria-hidden="true">×</span>
+<input id="lanhuSliceHeight" aria-label="框选高度（px）" type="text" inputmode="numeric" maxlength="4" placeholder="高">
+<div id="lanhuSliceGroup" class="ui-button" role="button" tabindex="0">框选切图</div>
+</div>
+<p id="lanhuSliceResizeHint" style="display: none;">先取消当前标记，再重新设置框选尺寸。</p>
+</div>
+<p id="lanhuSliceStatus" role="status"></p>
+<div id="lanhuSliceReconnect" style="display: none;" class="ui-button quiet-button" role="button" tabindex="0">重新连接蓝湖</div>
 </div>
 </div></div>
 </div>
 </div></div>
 <div id="panelScrollbar" role="scrollbar" aria-label="面板滚动" aria-controls="panelViewport" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0"><div id="panelScrollThumb"></div></div>
+</div>
+<div id="lanhuFooter" class="lanhu-workspace lanhu-footer" style="display: none;">
+<div id="lanhuAccountSettings" style="display: none;">
+<p id="lanhuAccountSummary">未登录</p>
+<div class="tool-actions"><div id="connectLanhu" class="ui-button" role="button" tabindex="0">刷新账号与项目</div><div id="lanhuLogout" aria-disabled="true" class="ui-button" role="button" tabindex="0">退出登录</div></div>
+</div>
+<p id="lanhuFooterHint" role="status"></p>
+<div id="lanhuUploadAction" class="ui-button lanhu-primary" aria-disabled="true" role="button" tabindex="0">上传到蓝湖</div>
+<div id="lanhuToggleSettings" class="ui-button quiet-button" role="button" aria-controls="lanhuAccountSettings" aria-expanded="false" tabindex="0">账号设置</div>
+<div id="lanhuResultActions" class="tool-actions" style="display: none;">
+<div id="lanhuRetryUpload" class="ui-button lanhu-primary" role="button" tabindex="0" style="display: none;">重试失败画板</div>
+<div id="lanhuForceUpload" class="ui-button" role="button" tabindex="0" style="display: none;">仍然上传</div>
+<div id="lanhuViewUpload" class="ui-button lanhu-primary" role="button" tabindex="0" style="display: none;">查看设计</div>
+<div id="lanhuNotifyUpload" class="ui-button" role="button" tabindex="0" style="display: none;">通知项目成员</div>
+<div id="lanhuBack" class="ui-button" role="button" tabindex="0">返回</div>
+</div>
+</div>
+<div id="lanhuSliceFooter" class="lanhu-workspace lanhu-footer" style="display: none;">
+<div id="lanhuSliceHelp" class="ui-button quiet-button" role="button" tabindex="0">切图帮助</div>
+<div id="lanhuSliceVisibility" class="ui-button" role="switch" aria-checked="true" aria-label="显示切图区域" tabindex="0">显示切图区域</div>
 </div>
 <div id="panelOverlays" aria-label="下拉菜单浮层"></div>
 <script src="panel.js"></script>

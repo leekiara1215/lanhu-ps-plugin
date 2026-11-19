@@ -263,6 +263,15 @@ class DeliveryTests(unittest.TestCase):
             delivery.build_bundle(self.root / "bad-identity", "bad-identity", panel)
         self.assertEqual(tree_hashes(self.plugin), self.before)
 
+    def test_panel_bundle_requires_transitive_workspace_module(self):
+        panel = self.panel_staging()
+        (panel / "panel.js").write_text('require("./workspaces/resources.js");')
+        (panel / "workspaces").mkdir()
+        (panel / "workspaces/resources.js").write_text('require("../domain/parameters.js");')
+        with self.assertRaisesRegex(ValueError, "Panel module dependency missing: Panel/domain/parameters.js"):
+            delivery.build_bundle(self.root / "missing-parameters", "missing-parameters", panel)
+        self.assertEqual(tree_hashes(self.plugin), self.before)
+
     def test_null_or_malformed_checksums_and_missing_files_refused_without_plugin_changes(self):
         for index, checksum in enumerate((None, True, 123, "", "a" * 63, "A" * 64, "g" * 64)):
             with self.subTest(checksum=checksum):

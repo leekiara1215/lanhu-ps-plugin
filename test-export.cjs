@@ -94,6 +94,10 @@ test("finalize refuses an incomplete native upload, local data leak, duplicates 
     const f = fixture(); await f.exporter.capture(f.payload, config, 55); uploaded(f.payload);
     assert.throws(() => f.exporter.finalize(f.payload, { projectId: "production" }));
     assert.throws(() => fixture().exporter.finalize(f.payload, config), /not captured/);
+    f.payload.artboard.gameUI.artboardId = "other-board";
+    assert.throws(() => f.exporter.finalize(f.payload, config), /artboard identity/);
+    delete f.payload.gameUI;
+    assert.throws(() => f.exporter.finalize(f.payload, config), /metadata is missing/);
 });
 test("authoring snapshot reuses existing audit source instead of creating a duplicate", async () => {
     const f = fixture();
@@ -213,4 +217,163 @@ test("known damaged GameUI XMP rejects with a repair prompt instead of silently 
         assert.equal(JSON.stringify(f.payload), before);
         assert.equal(f.counts().exports, 0);
     }
+});
+
+function artboardFixture() {
+    const f = fixture();
+    // A and B share a resource version. A also has an exclusive version.
+    delete f.metadata.optionalFuture;
+    const exclusive = "test.exclusive@1";
+    f.metadata.assets[exclusive] = structuredClone(f.metadata.assets[f.ref]);
+    f.metadata.authoring.sources[exclusive] = { ...f.metadata.authoring.sources[f.ref] };
+    f.metadata.nodes[15] = { ...f.metadata.nodes[12], nodeId: "exclusive-instance", assetRef: exclusive };
+    f.metadata.nodes[22] = { ...f.metadata.nodes[12], nodeId: "second-instance" };
+    const board = (id, ...layers) => ({ id, type: "artboardSection", name: "Same name", layers });
+    const a = board(101, { id: 10, layers: [{ id: 12 }, { id: 15 }] });
+    const b = board(102, { id: 22 });
+    const ordinary = board(103, { id: 32, type: "textLayer" }, { id: 33 });
+    const document = { id: 55, layers: [a, b, ordinary] };
+    function makePayload(board) {
+        function format(layer) {
+            return { id: String(layer.id), originID: layer.id, name: layer.type || "Layer",
+                frame: { left: 10, top: 12, width: 20, height: 14 },
+                image: { imageUrl: "https://test.invalid/native-" + layer.id + ".png" },
+                layers: (layer.layers || []).map(format) };
+        }
+        return { meta: { fileName: "Mixed synthetic PSD" }, artboard: { name: board.name,
+            id: "cloud-" + board.id, originID: String(board.id), documentMode: "artboard",
+            layers: board.layers.map(format) } };
+    }
+    async function prepare(...boards) {
+        const settings = { ...config, selectArtboards: boards.map(({ id }) => ({ id: String(id) })) };
+        await f.exporter.prepareAnalysis(document, settings, { id: document.id });
+        return (board, payload = makePayload(board)) =>
+            f.exporter.capture(payload, settings, document.id, {}, { document, mode: "ArtBoard", board });
+    }
+    return { ...f, document, a, b, ordinary, exclusive, makePayload, prepare };
+}
+
+test("mixed PSD exports only each selected board's marked nodes and asset versions; ordinary boards are unchanged", async () => {
+    const f = artboardFixture();
+    const originalXmp = JSON.stringify(f.metadata);
+    const capture = await f.prepare(f.a, f.b, f.ordinary);
+    const ordinary = f.makePayload(f.ordinary), baseline = structuredClone(ordinary);
+    assert.equal(await capture(f.ordinary, ordinary), ordinary);
+    assert.equal(f.exporter.finalize(ordinary, config), ordinary);
+    assert.deepEqual(ordinary, baseline);
+    const a = await capture(f.a), b = await capture(f.b);
+    assert.equal(f.counts().reads, 1);
+    assert.deepEqual(Object.keys(a.gameUI.nodes), ["12", "15"]);
+    assert.deepEqual(Object.keys(b.gameUI.nodes), ["22"]);
+    assert.deepEqual(Object.keys(a.gameUI.assets).sort(), [f.exclusive, f.ref].sort());
+    assert.deepEqual(Object.keys(b.gameUI.assets), [f.ref]);
+    assert.equal(a.artboard.layers[0].layers[0].gameUI.assetRef, b.artboard.layers[0].gameUI.assetRef);
+    assert.equal(a.gameUI.schemaVersion, 1);
+    assert.equal(a.gameUI.documentId, b.gameUI.documentId);
+    assert.notEqual(a.gameUI.artboardId, b.gameUI.artboardId);
+    assert.equal(a.artboard.gameUI.artboardId, a.gameUI.artboardId);
+    assert.equal(b.artboard.gameUI.artboardId, b.gameUI.artboardId);
+    const aSource = a.artboard.layers.find(layer => layer.gameUI?.assetRef === f.ref);
+    const bSource = b.artboard.layers.find(layer => layer.gameUI?.kind === "resourceSource");
+    assert.notEqual(aSource.id, bSource.id);
+    assert.notEqual(aSource.gameUI.nodeId, bSource.gameUI.nodeId);
+    assert.deepEqual(Buffer.from(aSource.image.bitmap), Buffer.from(bSource.image.bitmap));
+    for (const [payload, source] of [[a, aSource], [b, bSource]]) {
+        uploaded(payload);
+        f.exporter.finalize(payload, config);
+        assert.equal(payload.gameUI.assets[f.ref].sourceNodeId, source.id);
+        assert.equal(payload.gameUI.assets[f.ref].image.url, source.image.imageUrl);
+        assert.equal(payload.gameUI.assets[f.ref].image.exportScale, 1);
+        assert.doesNotMatch(JSON.stringify(payload), /pngBase64|authoring|uploadScope/);
+    }
+    assert.equal(JSON.stringify(f.metadata), originalXmp);
+});
+
+test("selecting only the ordinary board ignores unselected asset data; selecting only a marked board preserves its ID after save and reorder", async () => {
+    const f = artboardFixture();
+    f.metadata.authoring.sources[f.exclusive].pngBase64 = "damaged snapshot in A";
+    const captureOrdinary = await f.prepare(f.ordinary);
+    const ordinary = f.makePayload(f.ordinary);
+    assert.equal(await captureOrdinary(f.ordinary, ordinary), ordinary);
+    assert.equal(ordinary.gameUI, undefined);
+    await assert.rejects(captureOrdinary(f.a), /selected PSD artboard/);
+    const captureB = await f.prepare(f.b);
+    const before = await captureB(f.b);
+    f.document.id = 88; // Process-local document ID can change when reopened.
+    f.b.name = "Renamed";
+    f.b.bounds = { left: 950, top: 300, right: 1100, bottom: 400 };
+    f.document.layers.reverse();
+    const reopened = await (await f.prepare(f.b))(f.b);
+    assert.equal(reopened.gameUI.artboardId, before.gameUI.artboardId);
+    assert.equal(reopened.artboard.layers.at(-1).gameUI.nodeId, before.artboard.layers.at(-1).gameUI.nodeId);
+    assert.equal(reopened.gameUI.nodes[22].nodeId, before.gameUI.nodes[22].nodeId);
+    await assert.rejects((await f.prepare(f.a))(f.a), /PNG/);
+});
+
+test("the same native board keeps its identity after adding another PSD artboard; a legacy document canvas keeps its scalar ID", async () => {
+    const f = artboardFixture();
+    const all = f.document.layers;
+    f.document.layers = [f.b];
+    delete f.metadata.nodes[12]; delete f.metadata.nodes[15];
+    const first = await (await f.prepare(f.b))(f.b);
+    f.document.layers = all;
+    const second = await (await f.prepare(f.b, f.ordinary))(f.b);
+    assert.equal(first.gameUI.artboardId, second.gameUI.artboardId);
+    const old = fixture(), document = { id: 55, layers: [{ id: 12 }] };
+    const settings = { ...config, selectArtboards: [{ id: "55" }] };
+    await old.exporter.prepareAnalysis(document, settings, { _id: 55, title: "Legacy canvas.psd" });
+    Object.assign(old.payload.artboard, { originID: "55", documentMode: "document" });
+    await old.exporter.capture(old.payload, settings, 55, {}, { document, mode: "Background" });
+    assert.equal(old.payload.gameUI.artboardId, old.metadata.artboardId);
+    assert.equal(old.payload.artboard.layers[1].gameUI.nodeId, "gameui-resource:doc-1:test.soft-edge%401");
+});
+
+test("a legacy source in a different PSD artboard is never exported through that board or guessed from its name", async () => {
+    const f = artboardFixture();
+    delete f.metadata.authoring.sources[f.ref];
+    f.metadata.nodes[16] = { nodeId: "source-in-a", kind: "resourceSource", assetRef: f.ref };
+    f.a.layers.push({ id: 16 });
+    await assert.rejects(f.prepare(f.b), /source snapshot is missing/);
+    await assert.rejects(f.prepare(f.a), /source snapshot is missing/);
+    assert.equal(f.counts().exports, 0);
+});
+
+test("unknown PSD ownership and wrong native scope reject before mutation or source export", async () => {
+    for (const change of [
+        f => { f.metadata.nodes[99] = f.metadata.nodes[22]; },
+        f => { f.document.layers.push({ id: 99 }); f.metadata.nodes[99] = f.metadata.nodes[22]; },
+        f => { f.ordinary.layers.push({ id: 12 }); },
+        f => { f.metadata.nodes[22].nodeId = f.metadata.nodes[12].nodeId; },
+        f => { f.metadata.extensions = { "test.layout": { version: 1 } }; }
+    ]) {
+        const f = artboardFixture();
+        change(f);
+        await assert.rejects(f.prepare(f.b), { code: "GAMEUI_UPLOAD_SCOPE" });
+        assert.equal(f.counts().exports, 0);
+    }
+    const f = artboardFixture();
+    const capture = await f.prepare(f.a, f.b);
+    const wrongPayload = f.makePayload(f.a);
+    await assert.rejects(capture(f.b, wrongPayload), /formatted artboard/);
+    const movedLayer = f.makePayload(f.b);
+    movedLayer.artboard.layers[0].originID = 12;
+    await assert.rejects(capture(f.b, movedLayer), /ambiguous origin/);
+    const missingLayer = f.makePayload(f.b);
+    missingLayer.artboard.layers.length = 0;
+    await assert.rejects(capture(f.b, missingLayer), /node was not exported/);
+    await assert.rejects(f.exporter.capture(f.makePayload(f.b), config, 55, {}), /verified PSD selection/);
+    assert.equal(f.counts().exports, 0);
+});
+
+test("native analysis rejects an empty, duplicate, non-artboard or changed selection, including for a legacy canvas", async () => {
+    const f = artboardFixture();
+    const settings = ids => ({ ...config, selectArtboards: ids.map(id => ({ id })) });
+    for (const ids of [[], [101, 101], [101, 33], ["101junk"], [55]]) {
+        await assert.rejects(f.exporter.prepareAnalysis(f.document, settings(ids), { id: 55 }), /upload list/);
+    }
+    await assert.rejects(f.exporter.prepareAnalysis(f.document, settings([101]), { id: 56 }), /active PSD/);
+    await assert.rejects(f.exporter.prepareAnalysis(f.document, settings([101, 102]), { id: 55 },
+        { documentId: 55, boardIds: ["101", "101"] }), /changed before export/);
+    await assert.rejects(f.exporter.prepareAnalysis({ id: 55, layers: [] }, settings([]), { id: 55 }), /upload list/);
+    assert.equal(f.counts().reads, 0);
 });

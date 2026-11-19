@@ -1,14 +1,22 @@
 {
   "manifestVersion": 5,
   "id": "com.bettagames.gameui.authoring.test",
-  "name": "资源创作与蓝湖 · 0.6.12（隔离试用）",
-  "version": "0.6.12",
+  "name": "蓝湖与九宫格（隔离试用）",
+  "version": "0.6.21",
   "main": "index.html",
+  "icons": [{
+    "width": 48, "height": 48, "path": "icons/plugin.png", "scale": [1, 2],
+    "theme": ["darkest", "dark", "medium", "lightest", "light"], "species": ["pluginList"]
+  }],
   "host": { "app": "PS", "minVersion": "25.0.0", "data": { "apiVersion": 2 } },
   "requiredPermissions": { "localFileSystem": "request" },
   "entrypoints": [{
-    "type": "panel", "id": "gameuiAuthoring", "label": { "default": "资源创作与蓝湖 · 0.6.12（试用）" },
+    "type": "panel", "id": "gameuiAuthoring", "label": { "default": "蓝湖与九宫格 · 0.6.21（试用）" },
     "minimumSize": { "width": 320, "height": 480 }, "preferredDockedSize": { "width": 360, "height": 600 },
-    "preferredFloatingSize": { "width": 400, "height": 640 }
+    "preferredFloatingSize": { "width": 400, "height": 640 },
+    "icons": [{
+      "width": 23, "height": 23, "path": "icons/panel.png", "scale": [1, 2],
+      "theme": ["darkest", "dark", "medium", "lightest", "light"], "species": ["chrome"]
+    }]
   }]
 }

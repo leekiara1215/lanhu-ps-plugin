@@ -10,16 +10,19 @@ Framework 只保留经过审查的集成快照；后续从本仓库显式同步�
 ## 从这里开始
 
 - 当前交互、模块职责及数据契约以设计主文档为准。插件代码和设计文档在同一次变更中同步。[插件设计与变更规则](Docs/DESIGN.md)
-- [独立开发需求、协议与回交约定](Docs/PLUGIN-DEVELOPMENT-HANDOFF.md)：供新 Codex 接续插件开发，完成后交原总控做全链路验证。
 - [面板操作与支持范围](Panel/README.md)：仅 sRGB、8-bit RGB 普通像素层，源透明留白须明确填写。
+- [蓝湖官方功能对照](Docs/LANHU-PARITY.md)：已接入、尚未复刻与真机验收边界。
 - [交付、安装与恢复](DELIVERY.md)：固定官方插件版本与哈希、事务 CLI、升级及卸载。
 - [当前验收快照](Docs/ACCEPTANCE.md)：实际 PS 证据与尚未通过的门槛。
+- [PS 上传插件验收标准](Docs/PS-UPLOAD-ACCEPTANCE-STANDARD.md)：上传职责、可扩展元数据、逐项验收和放行条件。
 - [冻结契约](Docs/CONTRACT.md)、[开发与集成同步](Docs/MAINTENANCE.md)、[迁移核对](Docs/MIGRATION.md)。
 - [合成测试材料](Fixtures/README.md)、[原型历史记录](Docs/HISTORY.md)。
 
-日常操作为：选像素层 → 新建时配置一次资源，或明确选择已有版本 → 填目标宽高 → 一个主按钮完成初始化与应用 → 正常 Cmd+S。预览及维修操作在高级入口，详见 [面板说明](Panel/README.md)。0.5.1 真实主流程验收状态见 [集成记录](Docs/SYNC-20261117-PRIMARY.md)。
+面板默认打开「上传」，普通切图从「切图」进入。收录源图走「资源 → 公共资源」，制作九宫格走「资源 → 九宫格资源」。新建或明确选择已有版本，填目标宽高后应用。已绑定时直接改宽高，使用 Photoshop 的正常保存方式保存 PSD。详见 [面板说明](Panel/README.md)。
 
 ## 构建与加载
+
+0.6.17 的「公共资源」用于收录和导出原始源图。「九宫格资源」独立配置固定边、采样和目标尺寸，可复用同一源图版本。GitHub 的独立面板包包含这两个本地功能；需要蓝湖上传与切图时，用自己持有的固定原版按下文生成集成包。
 
 命令从仓库根目录执行；构建/离线测试使用 Node.js，事务 CLI 使用 Python 3，无第三方包依赖。
 Panel staging 必须在源码树外，目标目录须为新目录或空目录：
@@ -28,12 +31,12 @@ Panel staging 必须在源码树外，目标目录须为新目录或空目录：
 node Panel/build-panel.cjs /absolute/new/staging/GameUIAuthoring
 ```
 
-基础输出包含10个运行/说明文件。用 Adobe UXP Developer Tool 添加输出的 `manifest.json` 后 Load；
+基础输出包含面板运行文件、说明和 CCX 所需图标。用 Adobe UXP Developer Tool 添加输出的 `manifest.json` 后 Load；
 UDT 与 Photoshop「设置 → 增效工具 → Enable Developer Mode」均须启用。Panel 要求 Photoshop >=25、API 2；
 当前 PS28 / UDT2.4.0.2 已有加载证据。修改源码后重新构建到新目录，再由负责人 Reload/Load。
-ZIP 归档与 Panel 加载、官方上传适配器安装是不同步骤；CCX 正式分发尚未验证。
+接收试用版的同事可双击 CCX，通过 Creative Cloud Desktop 安装。0.6.21 已在 macOS 的 Photoshop 28 验证安装。开发加载、安装包和官方目录适配器流程见 [交付说明](DELIVERY.md#隔离试用-ccx)。
 
-0.6.0增加“资源创作 / 蓝湖工具”页签，创作页也可内联同一蓝湖界面并调用实际上传入口。构建带官方运行时的12文件候选需显式提供白名单原版：
+构建带官方运行时的集成候选需显式提供经哈希校验的原版。
 
 ```sh
 node Panel/build-panel.cjs /absolute/new/staging/GameUIIntegrated --official-plugin /absolute/pinned/original/lanhu

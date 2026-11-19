@@ -172,18 +172,24 @@ function capabilities(value) {
         value.requiredCapabilities.some(name => !CAPABILITIES.includes(name)))) throw new Error("Unknown required capability; use a compatible GameUI panel.");
 }
 
-function validateAsset(asset, source) {
+function validateAsset(asset, source, allowPlain = false) {
     capabilities(asset);
-    if (!asset.sourceSize || !asset.nineSlice || asset.nineSlice.unit !== "sourcePixel" || asset.nineSlice.center !== "stretch") throw new Error("Resource needs sourcePixel borders and stretch center.");
-    core.validateNineSlice(asset.sourceSize.width, asset.sourceSize.height, asset.nineSlice);
-    core.validateSampling(asset.sampling);
+    if (!asset.sourceSize) throw new Error("Resource needs source dimensions.");
+    if (asset.nineSlice === undefined && allowPlain) {
+        if (asset.sampling !== undefined) throw new Error("Sampling belongs to the nine-slice settings.");
+        dimensions(asset.sourceSize.width, asset.sourceSize.height);
+    } else {
+        if (!asset.nineSlice || asset.nineSlice.unit !== "sourcePixel" || asset.nineSlice.center !== "stretch") throw new Error("Resource needs sourcePixel borders and stretch center.");
+        core.validateNineSlice(asset.sourceSize.width, asset.sourceSize.height, asset.nineSlice);
+        core.validateSampling(asset.sampling);
+    }
     if (source) {
         if (source.width !== asset.sourceSize.width || source.height !== asset.sourceSize.height) throw new Error("Source size differs from PNG dimensions.");
         decodeSnapshot(source);
     }
 }
 
-function validateMetadata(metadata) {
+function validateMetadata(metadata, { catalog = false } = {}) {
     if (!metadata || metadata.schemaVersion !== 1) throw new Error("Unsupported GameUI schema version.");
     capabilities(metadata);
     if (typeof metadata.documentId !== "string" || !metadata.documentId.trim() ||
@@ -198,12 +204,13 @@ function validateMetadata(metadata) {
         if ((asset.assetKey !== undefined || asset.version !== undefined) &&
             (typeof asset.assetKey !== "string" || !Number.isInteger(asset.version) || asset.version <= 0 ||
                 asset.assetKey + "@" + asset.version !== ref)) throw new Error("Resource key/version differs from assetRef: " + ref);
-        validateAsset(asset, sources[ref]);
+        validateAsset(asset, sources[ref], catalog);
         if (asset.sampling !== undefined && !(metadata.requiredCapabilities || []).includes("sampling.v1")) throw new Error("Explicit sampling requires sampling.v1.");
     }
     for (const ref of Object.keys(sources)) if (!own(metadata.assets, ref)) throw new Error("Snapshot has no resource contract: " + ref);
     const ids = new Set();
     for (const marker of Object.values(metadata.nodes)) {
+        if (catalog) throw new Error("A resource directory cannot contain layer bindings.");
         capabilities(marker);
         if (typeof marker.nodeId !== "string" || !marker.nodeId.trim() || typeof marker.assetRef !== "string" || !marker.assetRef.trim() || ids.has(marker.nodeId)) throw new Error("Duplicate or missing nodeId; explicitly repair the selected layer identity.");
         ids.add(marker.nodeId);
@@ -229,6 +236,10 @@ function createMetadata() {
         nodes: {}, assets: {}, requiredCapabilities: ["nineSlice.v1", "sampling.v1"], authoring: { version: 1, sources: {} } };
 }
 
+function createCatalog() {
+    return { ...createMetadata(), requiredCapabilities: [] };
+}
+
 function stable(value) {
     if (Array.isArray(value)) return "[" + value.map(stable).join(",") + "]";
     if (value && typeof value === "object") return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + stable(value[key])).join(",") + "}";
@@ -242,18 +253,23 @@ function contract(asset) {
     return stable(value);
 }
 
-function mergeResource(metadata, ref, asset, source) {
-    validateAsset(asset, source);
+function mergeResource(metadata, ref, asset, source, mergeCatalog = false) {
+    validateAsset(asset, source, mergeCatalog);
     if (!source) throw new Error("A portable resource requires its original source snapshot.");
     metadata.authoring = metadata.authoring || { version: 1, sources: {} };
     const previous = metadata.assets[ref];
-    if (previous && (contract(previous) !== contract(asset) ||
+    const sameContract = previous && mergeCatalog && (!previous.nineSlice || !asset.nineSlice) ?
+        contract(sourceAsset(previous)) === contract(sourceAsset(asset)) : previous && contract(previous) === contract(asset);
+    if (previous && (!sameContract ||
         (metadata.authoring.sources[ref] && stable(metadata.authoring.sources[ref]) !== stable(source)))) {
         throw new Error("Immutable assetRef conflict: " + ref + ". Increment the resource version; pixels, size, borders and sampling cannot change.");
     }
-    metadata.assets[ref] = clone(asset);
+    metadata.assets[ref] = clone(mergeCatalog && previous?.nineSlice && !asset.nineSlice ?
+        { ...previous, ...asset } : asset);
     metadata.authoring.sources[ref] = clone(source);
-    metadata.requiredCapabilities = Array.from(new Set([...(metadata.requiredCapabilities || []), "nineSlice.v1", "sampling.v1"]));
+    if (asset.nineSlice) {
+        metadata.requiredCapabilities = Array.from(new Set([...(metadata.requiredCapabilities || []), "nineSlice.v1", "sampling.v1"]));
+    }
 }
 
 function bind(metadata, layerId, ref, freshIdentity = false) {
@@ -349,7 +365,7 @@ function importDirectory(metadata, input) {
 }
 
 function importResource(metadata, input, ref) {
-    validateMetadata(metadata); validateMetadata(input);
+    validateMetadata(metadata); validateMetadata(input, { catalog: !Object.keys(input.nodes || {}).length });
     if (!own(input.assets, ref)) throw new Error("Select an existing resource version.");
     const result = clone(metadata);
     mergeResource(result, ref, input.assets[ref], input.authoring && input.authoring.sources[ref]);
@@ -357,7 +373,7 @@ function importResource(metadata, input, ref) {
 }
 
 function resourceOptions(catalog, ref, mode, settings) {
-    validateMetadata(catalog);
+    validateMetadata(catalog, { catalog: !Object.keys(catalog.nodes || {}).length });
     if (mode === "create") return Object.assign({}, settings, { assetKey: core.createId(), version: 1 });
     const selected = catalog.assets[ref];
     if (!selected || !["update", "publish"].includes(mode) || !selected.assetKey || !selected.version) {
@@ -368,6 +384,72 @@ function resourceOptions(catalog, ref, mode, settings) {
         version = Math.max(...Object.values(catalog.assets).filter(asset => asset.assetKey === selected.assetKey).map(asset => asset.version)) + 1;
     }
     return Object.assign({}, settings, { assetKey: selected.assetKey, version, baseAsset: clone(selected) });
+}
+
+function sourceAsset(asset) {
+    const { nineSlice, sampling, sourceLayerId, sourceNodeId, image, ...source } = asset;
+    return source;
+}
+
+function writeCatalog(catalog) {
+    validateMetadata(catalog, { catalog: true });
+    const result = clone(catalog);
+    result.schemaVersion = 2;
+    result.nineSlices = {};
+    for (const [ref, asset] of Object.entries(result.assets)) {
+        if (!result.authoring?.sources[ref]) throw new Error("Directory export requires original snapshots for every resource: " + ref);
+        result.assets[ref] = sourceAsset(asset);
+        if (asset.nineSlice) result.nineSlices[ref] = { nineSlice: asset.nineSlice, sampling: asset.sampling };
+    }
+    return result;
+}
+
+function readCatalog(input) {
+    if (input?.schemaVersion === 1) return directory(input);
+    const result = clone(input);
+    if (result?.schemaVersion !== 2 || !result.assets || !result.nineSlices ||
+        typeof result.nineSlices !== "object" || Array.isArray(result.nineSlices)) {
+        throw new Error("Unsupported resource directory version.");
+    }
+    for (const asset of Object.values(result.assets)) {
+        if (!asset || own(asset, "nineSlice") || own(asset, "sampling")) throw new Error("Nine-slice settings must be stored in the nineSlices map.");
+    }
+    for (const [ref, settings] of Object.entries(result.nineSlices)) {
+        if (!own(result.assets, ref) || !settings?.nineSlice ||
+            Object.keys(settings).some(key => !["nineSlice", "sampling"].includes(key))) {
+            throw new Error("Invalid nine-slice directory record: " + ref);
+        }
+        Object.assign(result.assets[ref], settings);
+    }
+    result.schemaVersion = 1;
+    delete result.nineSlices;
+    validateMetadata(result, { catalog: true });
+    for (const ref of Object.keys(result.assets)) {
+        if (!result.authoring?.sources[ref]) throw new Error("Directory import requires original snapshots for every resource: " + ref);
+    }
+    return result;
+}
+
+function importCatalog(catalog, input) {
+    validateMetadata(catalog, { catalog: true });
+    const incoming = readCatalog(input);
+    const result = clone(catalog);
+    for (const [ref, asset] of Object.entries(incoming.assets)) mergeResource(result, ref, asset, incoming.authoring.sources[ref], true);
+    return validateMetadata(result, { catalog: true });
+}
+
+function addPublicResource(catalog, displayName, source) {
+    displayName = displayName.trim();
+    if (!displayName) throw new Error("Enter a public resource name.");
+    validateMetadata(catalog, { catalog: true });
+    if (Object.values(catalog.assets).some(asset =>
+        typeof asset.displayName === "string" && asset.displayName.trim() === displayName)) {
+        throw new Error("A public resource already uses this name.");
+    }
+    const result = clone(catalog), assetKey = core.createId(), ref = assetKey + "@1";
+    const asset = { assetKey, version: 1, displayName, sourceSize: { width: source.width, height: source.height } };
+    mergeResource(result, ref, asset, source, true);
+    return result;
 }
 
 function inspect(metadata, layers) {
@@ -410,4 +492,5 @@ function preview(source, border, width, height, sampling) {
 
 module.exports = { MAX_PIXELS, base64, unbase64, encodePng, decodeSnapshot, snapshot, validateMetadata, createMetadata,
     define, reference, copyNode, forkDocument, directory, importDirectory, inspect, preview, contract,
-    validateTarget, targetFromPixels, withTarget, importResource, resourceOptions };
+    validateTarget, targetFromPixels, withTarget, importResource, resourceOptions,
+    createCatalog, readCatalog, writeCatalog, importCatalog, addPublicResource };

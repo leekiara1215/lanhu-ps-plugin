@@ -8,12 +8,11 @@
 ## 两部分入口
 
 - 独立 Panel：A 维护资源目录、实例和本地 XMP，通过 `authoring.sources[assetRef]` 提供 1× 8-bit RGBA PNG。
-- 上传适配器：B 的 `capture/finalize` 在既有官方导出后注入源节点，由同一次官方上传填回 URL。
-  只改官方入口的两处 seam，保留官方上传和序列化。源节点仅存在于 payload，PSD 不必摆放源小图。
+- 上传适配器在原版读取 PSD 图层树后核对选传范围。`capture/finalize` 为标记画板注入源节点，由同一次原版上传填回 URL。源节点仅存在于 payload，PSD 不必摆放源小图。
 
 读取的官方 1.0.32 包 manifestVersion=4、Photoshop apiVersion=1，仅声明 `showlanhu` 面板，无上传 command 入口。
 Adobe 的 IPC 支持调用另一插件显式暴露的 command/panel，不能凭空拦截其私有上传流程。
-因此独立 Panel 负责创作，受保护的两处适配器负责官方上传接入。本版本不另造上传服务，也不改变主路线。
+独立 Panel 负责创作，受项目门禁保护的适配器接入原版上传和序列化流程。
 
 依据：[Adobe IPC](https://developer.adobe.com/uxp/guides/how-to/inter-plugin-comm/)。
 
@@ -77,7 +76,7 @@ Panel staging 必须包含 manifest.json、index.html、panel.css、panel.js、R
 以及 manifest.main 指向的实际文件；manifest 需使用独立插件 ID 和 Photoshop host。panelIncluded 必须为布尔值，并与目录和文件清单一致。
 构建时与安装读取时使用同一套完整校验；缺文件搭配 null 哈希仍明确拒绝，不会继续写入入口。CLI 禁止产生 Python bytecode 缓存污染包清单。
 
-0.6.0页签版另需 `lanhu-host.js`、`gameui-export.js`，基础构建共10文件；旧8文件候选仍兼容。可用 `Panel/build-panel.cjs <新绝对路径> --official-plugin <白名单原版绝对路径>` 构建12文件集成候选，在staging增加 `lanhu-runtime.js` / `lanhu-runtime.json`。此可选输出按用户要求携带从已校验原包生成的Vue运行时，不入git，也不改实装包；其来源SHA、生成SHA、测试项目及API版本由清单核对。归档/安装拒绝依赖缺失、运行时/身份单边缺失或身份不符。该集成界面与原官方目录的两处seam安装是独立入口，不能将内嵌模块加载当成适配器实装成功。
+0.6.17 的面板构建包含 Adobe CCX 所需图标。可用 `Panel/build-panel.cjs <新绝对路径> --official-plugin <白名单原版绝对路径>` 生成集成版，并在 staging 中生成 `lanhu-runtime.js` 和 `lanhu-runtime.json`。原包来源 SHA、生成 SHA、测试项目及 API 版本由清单核对。内嵌运行时和原版目录适配器分别安装、分别验收。
 
 ZIP 是可审查的交付归档，解压为目录后调用随包 CLI；不是已验证的 CCX 安装器，不应改名冒充 CCX。
 不含 Panel 时 `panelIncluded=false`，这时只提供上传适配器；不能据此声称面板安装成功。
@@ -116,6 +115,14 @@ python3 -B gameui-delivery.py recover --plugin '/绝对路径/官方插件目录
 recover 恢复中断操作前的文件，且仅允许当前字节等于事务记录的 before/after；有第三方新改动时保留全部文件并拒绝。
 `--clear-stale-lock` 仅在记录的 PID 已退出时解除锁，不终止进程。不要删除日志或手工覆盖备份来绕过拒绝。
 `build-audit-patch.py` 保留只读补丁构建 API；原先 `--install/--restore` 明确拒绝，防止走无事务的旧安装流程。
+
+## 隔离试用 CCX
+
+1. 用固定白名单原包构建集成 staging，并核对运行文件与 Photoshop 实机验收的版本一致。
+2. 在 Adobe UXP Developer Tool 添加 staging 中的 `manifest.json`，从插件行菜单选择 **Package**。核对生成的 CCX 文件清单、manifest 和 SHA-256。
+3. 收件人双击 CCX，由 Creative Cloud 安装。打开 Photoshop 25.0 或以上版本，在「增效工具」菜单打开「蓝湖与九宫格」，用自己的蓝湖账号登录。上传范围限隔离测试项目。给现有 Unity 读取器的稿件选 Android xxhdpi。
+
+安装包与官方目录适配器分别交付，CCX 安装到独立试用插件 ID。实装证据及已验证平台见 [验收快照](Docs/ACCEPTANCE.md)。[Adobe CCX 安装说明](https://developer.adobe.com/uxp/guides/how-to/distribution/install/)
 
 ## 独立 Panel 的宿主加载与分发（保留 B 实现阶段记录）
 

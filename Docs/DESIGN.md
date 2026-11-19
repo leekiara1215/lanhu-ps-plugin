@@ -61,7 +61,7 @@
 
 1. **确认选传范围。** `prepareAnalysis` 在原生分析前对照实际 PSD 图层树和选传清单。原生画板上的 `artboardId` 由持久 `documentId` 与 PSD 原生画板图层 ID 共同确定。无原生画板的稿件沿用 XMP 中的 `artboardId`。既有原生画板修订若依赖旧的单一文档级 `artboardId`，迁移时须独立核对绑定关系。
 2. **按画板提取。** 原生格式化后，`capture` 复核画板与图层来源。普通画板沿用原生数据。标记画板仅携带本画板的标记及引用资源，同一 `assetRef` 跨画板复用时，每张涉及的画板各自携带一份来自同一快照的源节点。归属不明、选传范围不一致、源缺失或多画板根字段无法安全分配时拒绝导出。
-3. **准备源 PNG 和实例几何。** 既有原生源节点可沿用，需注入的 1× 源节点只存在于导出数据。带 `targets` 的实例先核对原生内容框，再用当前内容位置减左上留白恢复完整画布，并在 `gameUI.nativeReferenceFrame` 保留原生裁剪参考。旧稿缺目标记录时保留原生框。原生缩放等操作导致内容尺寸与记录冲突时，提示回面板重新应用。
+3. **准备源 PNG 和实例几何。** 既有原生源节点可沿用，需注入的 1× 源节点只存在于导出数据。集成版对本批已核实的九宫格实例使用原生裁剪流程生成校验图。普通命名的实例保留原图层名称，无需添加蓝湖切图前缀。带 `targets` 的实例先核对原生内容框，再用当前内容位置减左上留白恢复完整画布，并在 `gameUI.nativeReferenceFrame` 保留原生裁剪参考。旧稿缺目标记录时保留原生框。原生缩放等操作导致内容尺寸与记录冲突时，提示回面板重新应用。
 4. **交回原生提交。** 由原生上传链路传输资源。`finalize` 验证源和实例上传状态，写入云端源节点引用、URL 和 1× 尺寸，再交由蓝湖提交。旧审计稿兼容路径及官方插件目录的适配器按固定契约处理，未标记稿沿原生导出。
 
 [导出适配器](../gameui-export.js) · [集成构建](../Panel/build-lanhu-runtime.cjs) · [官方入口适配](../build-audit-patch.py) · [交付手册](../DELIVERY.md)
@@ -71,6 +71,7 @@
 - `Panel/manifest.json` 和 `Panel/index.html` 是 UXP 入口。面板使用独立 ID `com.bettagames.gameui.authoring.test`，要求 Photoshop 25.0 以上和 API 2。`panel.js` 装配工作区与生命周期，`ui/` 负责导航、控件与提示，`workspaces/` 负责页面状态，`domain/parameters.js` 解析输入和上传范围。
 - `Panel/application/` 负责目录、创作与 PSD 事务，`Panel/adapters/catalog-storage.js` 适配 UXP 文件读写。根目录的 `gameui-authoring.js` 和 `gameui-core.js` 保存可离线测试的资源与像素逻辑，`gameui-ps.js` 连接 Photoshop XMP、图层及像素接口，`gameui-export.js` 负责上传契约。
 - **独立面板**由 `Panel/build-panel.cjs` 在源码树外的新目录或空目录生成。基础构建提供本地资源工作区，使用 Adobe UXP Developer Tool 加载。集成构建显式提供蓝湖 UXP `1.0.32（303）` 原包，校验 manifest 和入口文件 SHA-256 及注入位置，再生成 `lanhu-runtime.js` 和来源清单。`lanhu-host.js` 用插件独立会话和宿主桥接驱动原版业务模块。集成 staging 增加网络及外部 HTTP(S) 打开权限。
+- **隔离试用安装包**由 Adobe UXP Developer Tool 将验收过的集成 staging 打包为 CCX，沿用隔离试用插件 ID。收件人通过 Creative Cloud 安装，并使用自己的蓝湖账号登录测试项目。CCX 只包含运行所需的插件文件、图标和说明，安装记录与包 SHA-256 单独核对。
 - **官方插件目录适配器**由 `build-audit-patch.py` 根据同一固定构建生成。`gameui-delivery.py` 提供确定性 ZIP 和独立的安装、升级、诊断、卸载、恢复及回滚入口。磁盘变更须显式指定官方插件路径与外置持久状态目录，使用哈希、快照和事务日志，遇到未知版本或外部改动须停止。面板 UDT 加载与官方插件目录适配器是独立入口，需分别验收。
 
 [面板入口](../Panel/panel.js) · [staging 构建](../Panel/build-panel.cjs) · [交付 CLI](../gameui-delivery.py) · [构建、安装与恢复](../DELIVERY.md)
@@ -78,6 +79,6 @@
 ## 验证与变更规则
 
 - 用与改动对应的测试验证。创作、XMP、身份和像素检查见 `test-authoring.cjs`、`test-gameui.cjs` 及 `test-production-fixtures.cjs`。面板交互见 `test-panel-layout.cjs`，蓝湖宿主及导出见 `test-lanhu-host.cjs` 和 `test-export.cjs`。固定官方模块 harness 和安装生命周期测试使用经校验的原版副本。步骤与输入见 [离线测试](../README.md#离线测试)及[交付手册](../DELIVERY.md)。
-- 较早候选已有 Photoshop 加载、部分账号授权、普通上传及切图对照证据。0.6.20 的真实宿主操作、九宫格及混合多画板上传与云端回读、Unity 导入和正式分发按同一候选包验收。官方功能对照和上传验收门槛详见候选对应的 `Docs/LANHU-PARITY.md` 与 `Docs/PS-UPLOAD-ACCEPTANCE-STANDARD.md`。[验收快照](ACCEPTANCE.md)
+- 0.6.21 在 Photoshop 28 实传两份复用旧目录资源的稿件并回读云端 GameUI v1 和 1× 源图。完整混合多画板、Unity Prefab 生成和生产推广仍分别验收。官方功能对照和上传验收门槛见下列文档。[验收快照](ACCEPTANCE.md) · [蓝湖功能对照](LANHU-PARITY.md) · [上传验收标准](PS-UPLOAD-ACCEPTANCE-STANDARD.md)
 - 更新设计先修订本文，再按修订后的设计实现。更新插件代码时，在同一次变更中同步本文中的受影响章节，核对用户流程、模块责任、数据与兼容契约、失败处理和验证范围。仅有实现调整时，在相关章节简记调整内容和行为核对结论。
 - 冻结的跨端接口由 [CONTRACT.md](CONTRACT.md) 定义。涉及冻结接口的设计变更先与集成负责人确认，再同步契约、本文、实现和对应验收。使用步骤、发布证据和回交记录各自在原有文档维护，本文引用具体出处。仓库级规则见 [AGENTS.md](../AGENTS.md)，日常流程见 [维护与同步](MAINTENANCE.md)。

@@ -49,6 +49,24 @@ function nativeUploader(exporter, expected, uploads) {
     return { upload: result.uploadSingleArtboart, finalizations: () => finalizations };
 }
 
+async function uploadOffline(exporter, payload) {
+    const uploads = [], events = [];
+    const native = nativeUploader(exporter, payload, uploads);
+    await new Promise((resolve, reject) => {
+        native.upload({ json: payload, image: Uint8Array.from(png()).buffer, info: { id: payload.meta.id, name: "test" } },
+            { ...config, sizeInfo: { deviceType: "Android", deviceScale: "xxhdpi" } }, event => {
+                events.push(event);
+                if (event.artboard.code === "success") resolve();
+                if (event.artboard.code === "error") reject(new Error(event.artboard.message));
+            }).catch(reject);
+    });
+    assert.equal(native.finalizations(), 1);
+    assert.equal(events.at(-1).artboard.code, "success");
+    const serialized = uploads.find(entry => entry.name.endsWith(".json"));
+    assert.ok(serialized);
+    return { uploads, serialized, cloud: JSON.parse(serialized.value) };
+}
+
 test("pinned official uploader traverses injected/nested bitmaps, preserves root identity and serializes v1 without authoring", async () => {
     const f = fixture();
     f.payload.meta.id = "board-native";
@@ -64,22 +82,7 @@ test("pinned official uploader traverses injected/nested bitmaps, preserves root
     await f.exporter.capture(f.payload, config, 55);
     const source = f.payload.artboard.layers[1];
     assert.equal(source.type, "shapeLayer");
-    const uploads = [];
-    const native = nativeUploader(f.exporter, f.payload, uploads);
-    const events = [];
-    await new Promise((resolve, reject) => {
-        native.upload({ json: f.payload, image: Uint8Array.from(png()).buffer, info: { id: "board-native", name: "test" } },
-            { ...config, sizeInfo: { deviceType: "Android", deviceScale: "xxhdpi" } }, event => {
-                events.push(event);
-                if (event.artboard.code === "success") resolve();
-                if (event.artboard.code === "error") reject(new Error(event.artboard.message));
-            }).catch(reject);
-    });
-    assert.equal(native.finalizations(), 1);
-    assert.equal(events.at(-1).artboard.code, "success");
-    const serialized = uploads.find(entry => entry.name.endsWith(".json"));
-    assert.ok(serialized);
-    const cloud = JSON.parse(serialized.value);
+    const { uploads, serialized, cloud } = await uploadOffline(f.exporter, f.payload);
     assert.equal(cloud.gameUI.schemaVersion, 1);
     assert.equal(cloud.gameUI.assets[f.ref].sourceNodeId, source.id);
     assert.equal(cloud.gameUI.assets[f.ref].image.url, source.image.imageUrl);
@@ -91,4 +94,44 @@ test("pinned official uploader traverses injected/nested bitmaps, preserves root
     assert.deepEqual(cloudInstance.frame, { left: 10, top: 20, width: 24, height: 18 });
     assert.deepEqual(cloudInstance.gameUI.nativeReferenceFrame, { left: 12, top: 22, width: 20, height: 14 });
     assert.doesNotMatch(serialized.value, /pngBase64|uploadScope|authoring|bitmap/);
+});
+
+test("pinned uploader serializes two PSD artboards as independent v1 payloads that reference the same 1x resource version", async () => {
+    const f = fixture();
+    delete f.metadata.optionalFuture;
+    f.metadata.nodes[22] = { ...f.metadata.nodes[12], nodeId: "other-instance" };
+    const boards = [12, 22].map((layerId, index) => ({
+        id: 101 + index, type: "artboardSection", layers: [{ id: layerId }]
+    }));
+    const document = { id: 55, layers: boards };
+    const batch = { ...config, selectArtboards: boards.map(board => ({ id: String(board.id) })) };
+    await f.exporter.prepareAnalysis(document, batch, { id: 55 });
+    const results = [];
+    for (const board of boards) {
+        const payload = structuredClone(f.payload);
+        payload.meta.id = "cloud-" + board.id;
+        Object.assign(payload.artboard, { id: payload.meta.id, originID: String(board.id), documentMode: "artboard",
+            frame: { left: 0, top: 0, width: 80, height: 80 } });
+        const layer = payload.artboard.layers[0];
+        layer.id = layer.originID = board.layers[0].id;
+        layer.image = { bitmap: Uint8Array.from(png(20, 14)).buffer };
+        await f.exporter.capture(payload, batch, 55, {}, { document, mode: "ArtBoard", board });
+        const { uploads, serialized, cloud } = await uploadOffline(f.exporter, payload);
+        const asset = cloud.gameUI.assets[f.ref];
+        const source = cloud.artboard.layers.find(layer => layer.id === asset.sourceNodeId);
+        assert.deepEqual(Object.keys(cloud.gameUI.nodes), [String(layer.id)]);
+        assert.equal(source.gameUI.assetRef, f.ref);
+        assert.equal(cloud.artboard.layers[0].gameUI.assetRef, f.ref);
+        assert.equal(asset.image.url, source.image.imageUrl);
+        assert.deepEqual([asset.image.exportScale, asset.image.width, asset.image.height], [1, 8, 6]);
+        assert.deepEqual(Buffer.from(uploads.find(entry => entry.name === source.image.imageUrl.split("/").at(-1)).value), png());
+        assert.doesNotMatch(serialized.value, /pngBase64|uploadScope|authoring|bitmap/);
+        results.push({ metadata: cloud.gameUI, asset, source });
+    }
+    const [a, b] = results;
+    assert.equal(a.metadata.documentId, b.metadata.documentId);
+    assert.notEqual(a.metadata.artboardId, b.metadata.artboardId);
+    assert.notEqual(a.asset.sourceNodeId, b.asset.sourceNodeId);
+    assert.equal(a.asset.image.url, b.asset.image.url);
+    assert.notEqual(a.source.gameUI.nodeId, b.source.gameUI.nodeId);
 });

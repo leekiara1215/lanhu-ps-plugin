@@ -138,6 +138,29 @@ test("cross-PSD portable directory carries original snapshots and names, preserv
     assert.doesNotThrow(() => author.importDirectory(metadata, reversed));
 });
 
+test("v2 catalog separates shared source records while preserving v1 nine-slice versions", () => {
+    const { metadata, ref } = fixture();
+    const legacy = author.directory(metadata);
+    const imported = author.importCatalog(author.createCatalog(), legacy);
+    const catalog = author.addPublicResource(imported, "普通图标", metadata.authoring.sources[ref]);
+    const stored = author.writeCatalog(catalog);
+    const plain = Object.keys(stored.assets).find(key => key !== ref);
+    assert.equal(stored.schemaVersion, 2);
+    assert.equal(stored.assets[ref].nineSlice, undefined);
+    assert.equal(stored.assets[ref].sampling, undefined);
+    assert.deepEqual(stored.nineSlices[ref].nineSlice, metadata.assets[ref].nineSlice);
+    assert.deepEqual(Object.keys(stored.nineSlices), [ref]);
+    assert.deepEqual(author.readCatalog(stored), catalog);
+    assert.deepEqual(author.importResource(author.createMetadata(), catalog, ref).assets[ref], metadata.assets[ref]);
+    assert.throws(() => author.importResource(author.createMetadata(), catalog, plain), /sourcePixel borders/);
+    const overlap = clone(stored);
+    overlap.assets[ref].nineSlice = stored.nineSlices[ref].nineSlice;
+    assert.throws(() => author.readCatalog(overlap), /nineSlices map/);
+    delete overlap.assets[ref].nineSlice;
+    overlap.nineSlices.orphan = stored.nineSlices[ref];
+    assert.throws(() => author.readCatalog(overlap), /Invalid nine-slice directory record/);
+});
+
 test("unsupported schema/capability, malformed identities and instance overrides block writes", () => {
     const { metadata, ref } = fixture();
     const mutations = [
@@ -326,6 +349,11 @@ test("panel staging contains standalone runtime and refuses destructive overwrit
         const manifest = JSON.parse(fs.readFileSync(path.join(target, "manifest.json")));
         assert.equal(manifest.host.data.apiVersion, 2);
         assert.equal(manifest.id, "com.bettagames.gameui.authoring.test");
+        assert.match(fs.readFileSync(path.join(target, "index.html"), "utf8"), /data-lanhu-runtime="excluded"/);
+        assert.equal(fs.existsSync(path.join(target, "lanhu-runtime.js")), false);
+        for (const icon of [...manifest.icons, ...manifest.entrypoints[0].icons]) {
+            assert.deepEqual(fs.readFileSync(path.join(target, icon.path)), fs.readFileSync(path.join(__dirname, "Panel", icon.path)));
+        }
         for (const file of ["gameui-core.js", "gameui-ps.js", "gameui-authoring.js"]) assert.equal(fs.readFileSync(path.join(target, file), "utf8"), fs.readFileSync(path.join(__dirname, file), "utf8"));
         assert.equal(cp.spawnSync(process.execPath, [script, target]).status, 1);
         assert.equal(cp.spawnSync(process.execPath, [script, path.join(__dirname, "Panel")]).status, 1);
@@ -368,13 +396,14 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         removeEventListener(name, callback) { if (this.listeners[name] === callback) delete this.listeners[name]; }
         contains(target) { return this === target || this.children.some(child => child.contains(target)); }
     }
-    const html = fs.readFileSync(path.join(__dirname, "Panel/index.html"), "utf8");
+    let html = fs.readFileSync(path.join(__dirname, "Panel/index.html"), "utf8");
+    if (!startup.standalone) html = html.replace('data-lanhu-runtime="excluded"', 'data-lanhu-runtime="included"');
     const elements = {};
     for (const match of html.matchAll(/<(\w+)[^>]*id="([^"]+)"[^>]*>/g)) {
         const element = elements[match[2]] = new Element(match[1]);
         element.id = match[2];
         const value = match[0].match(/value="([^"]*)"/); if (value) element.value = value[1];
-        for (const attribute of match[0].matchAll(/(class|role|aria-disabled|aria-selected|aria-pressed|tabindex)="([^"]*)"/g)) {
+        for (const attribute of match[0].matchAll(/(class|role|aria-disabled|aria-selected|aria-pressed|tabindex|data-lanhu-runtime)="([^"]*)"/g)) {
             element.setAttribute(attribute[1], attribute[2]);
             if (attribute[1] === "class") element.className = attribute[2];
         }
@@ -430,9 +459,16 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         assert.equal(callback, notification); assert.deepEqual(Array.from(events), env.state.notificationEvents);
         env.state.notificationRemoveCalls = (env.state.notificationRemoveCalls || 0) + 1; notification = null;
     };
-    const file = { name: "gameui-resource-catalog.json", text: catalogText,
-        async write(value) { this.text = value; }, async read() { return this.text; } };
-    const folder = { async getEntries() { return file.text === undefined ? [] : [file]; }, async createFile() { return file; } };
+    const localFiles = new Map();
+    function addCatalogFile(name, text) {
+        const entry = { name, text, async write(value) { this.text = value; }, async read() { return this.text; } };
+        localFiles.set(name, entry);
+        return entry;
+    }
+    const legacyName = "gameui-resource-catalog.json", currentName = "gameui-resource-catalog-v2.json";
+    if (catalogText !== undefined) addCatalogFile(legacyName, catalogText);
+    const file = { get text() { return (localFiles.get(currentName) || localFiles.get(legacyName))?.text; } };
+    const folder = { async getEntries() { return [...localFiles.values()]; }, async createFile(name) { return addCatalogFile(name); } };
     let releaseCatalog;
     const catalogReady = startup.deferCatalog ? new Promise(resolve => { releaseCatalog = resolve; }) : Promise.resolve();
     const entrypoints = {};
@@ -444,7 +480,7 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         }
         entrypoints.value = value;
         if (value.plugin) { value.plugin.create(); env.state.pluginCreateCalls = (env.state.pluginCreateCalls || 0) + 1; }
-        if (startup.showDuringSetup) value.panels.gameuiAuthoring.show();
+        if (startup.showDuringSetup) entrypoints.showReady = value.panels.gameuiAuthoring.show();
     } }, storage: { localFileSystem: { async getDataFolder() { await catalogReady; return folder; },
         async getFileForOpening() { return { async read() { return JSON.stringify(startup.importDirectory || author.directory(fixture().metadata)); } }; } } } };
     const documentEvents = {};
@@ -463,12 +499,17 @@ async function panelHarness(catalogText, initialMetadata, startup = {}) {
         console, require(name) {
             if (name === "photoshop") return env.photoshop; if (name === "uxp") return uxp;
             if (name === "./gameui-ps.js") return env.store; if (name === "./gameui-authoring.js") return author;
-            if (name === "./lanhu-host.js") return startup.lanhuHost ? { createLanhuHost: startup.lanhuHost } : require("./Panel/lanhu-host.js");
-            if (name === "./gameui-core.js") return core; throw new Error(name);
+            if (name === "./lanhu-host.js") return startup.lanhuHost ? { ...require("./Panel/lanhu-host.js"), createLanhuHost: startup.lanhuHost } : require("./Panel/lanhu-host.js");
+            if (name === "./gameui-core.js") return core;
+            if (name.startsWith("./")) return require("./Panel/" + name.slice(2));
+            throw new Error(name);
         }
     });
+    await entrypoints.showReady;
+    const authoringReady = startup.startOnUpload ? null : elements.tabAuthoring.listeners.click();
+    if (!startup.deferCatalog) await authoringReady;
     await new Promise(resolve => setImmediate(resolve));
-    return { ...env, elements, file, releaseCatalog, entrypoints, documentEvents,
+    return { ...env, elements, file, localFiles, releaseCatalog, entrypoints, documentEvents,
         async notify(name = "select") { if (notification) await notification(name, {}); },
         selectParts(id) {
             const [trigger] = elements[id].children;
@@ -530,9 +571,13 @@ test("corrupt automatic catalog blocks writes until explicit valid directory imp
     await env.click("initialize");
     assert.match(env.elements.status.textContent, /阻止覆盖/);
     assert.equal(env.file.text, "{broken"); assert.equal(await env.metadata(), null);
+    await env.click("tabPublicResources");
+    assert.match(env.elements.publicResourceStatus.textContent, /导入有效备份/);
     await env.click("import");
     assert.ok(JSON.parse(env.file.text).assets["ui.button.primary@1"]);
-    // Import recovers the catalog, while the unopened/uninitialized PSD still requires explicit init.
+    assert.deepEqual(env.state.notificationEvents, ["select", "open", "close"]);
+    // Import recovers the catalog, while the uninitialized PSD still requires explicit init.
+    await env.click("tabAuthoring");
     await env.click("initialize");
     assert.equal((await env.metadata()).schemaVersion, 1);
 });
@@ -737,8 +782,8 @@ test("panel distinguishes existing and imported same-name same-version options w
         assert.equal(items.length, 3);
         const first = items.find(item => item.getAttribute("data-resource-ref") === ref), second = items.find(item => item.getAttribute("data-resource-ref") === secondRef);
         assert.notEqual(first.textContent, second.textContent);
-        assert.match(first.textContent, /条目 [1-3]$/); assert.match(second.textContent, /条目 [1-3]$/);
-        assert.equal(items.find(item => item.getAttribute("data-resource-ref") === uniqueRef).textContent, "唯一名称 · v1");
+        assert.match(first.textContent, /条目 [1-3] · .*采样/); assert.match(second.textContent, /条目 [1-3] · .*采样/);
+        assert.match(items.find(item => item.getAttribute("data-resource-ref") === uniqueRef).textContent, /^唯一名称 · v1 · 6 × 5/);
         assert.deepEqual(items.map(item => item.getAttribute("data-resource-ref")).sort(), [ref, secondRef, uniqueRef].sort());
         await env.click("initialize");
         env.chooseResource(secondRef);
@@ -778,7 +823,9 @@ test("primary action initializes and creates from source64 before applying the c
     assert.equal(env.state.history.length, 1); assert.equal(env.state.history[0].committed, true);
     assert.equal(env.chosenResource(), marker.assetRef);
     assert.equal(env.elements.newResourceSettings.style.display, "none");
-    assert.match(env.elements.inheritedContract.textContent, /7\/5\/11\/9/);
+    assert.match(env.elements.targetMinimum.textContent, /18 × 14 px/);
+    assert.equal(env.elements.resourceChoices.style.display, "none");
+    assert.equal(env.elements.primaryAction.textContent, "应用尺寸");
     assert.match(env.elements.status.textContent, /Cmd\+S/);
     await env.click("primaryAction");
     const reapplied = await env.metadata();
@@ -797,7 +844,8 @@ test("primary action references an explicitly chosen resource in a second unmark
     second.layers = [layer]; second.activeLayers = [layer];
     env.photoshop.app.documents.push(second); env.photoshop.app.activeDocument = second;
     await env.notify("open");
-    assert.equal(env.chosenResource(), ref, "An already explicit resource choice may carry to the next unbound instance.");
+    assert.equal(env.chosenResource(), "", "An unbound layer must not silently inherit the previous layer's resource.");
+    env.chooseResource(ref);
     assert.equal(env.elements.targetWidth.value, "64"); assert.equal(env.elements.targetHeight.value, "48");
     assert.match(env.elements.targetHint.textContent, /非空边界/);
     env.elements.targetWidth.value = "192"; env.elements.targetHeight.value = "96";
@@ -816,6 +864,56 @@ test("primary action references an explicitly chosen resource in a second unmark
     assert.equal(env.state.history.length, 2); assert.ok(env.state.history.every(item => item.committed));
 });
 
+test("legacy PSD reuses a v1 directory source and writes a separate v2 directory", async () => {
+    const { metadata: legacy, ref, source } = fixture();
+    legacy.assets[ref].optionalFutureContract = { keep: true };
+    const oldDirectoryText = JSON.stringify(author.directory(legacy));
+    delete legacy.authoring;
+    legacy.futureDocument = { keep: true };
+    const env = await panelHarness(oldDirectoryText, legacy);
+    assert.equal(env.chosenResource(), ref);
+    env.elements.targetWidth.value = "12";
+    env.elements.targetHeight.value = "10";
+    await env.click("primaryAction");
+    const applied = await env.metadata();
+    assert.equal(applied.documentId, legacy.documentId);
+    assert.equal(applied.artboardId, legacy.artboardId);
+    assert.equal(applied.nodes[10].nodeId, legacy.nodes[10].nodeId);
+    assert.equal(applied.nodes[10].assetRef, ref);
+    assert.deepEqual(applied.futureDocument, legacy.futureDocument);
+    assert.deepEqual(applied.assets[ref], legacy.assets[ref]);
+    assert.deepEqual(applied.authoring.sources[ref], source);
+    assert.equal(applied.authoring.targets[applied.nodes[10].nodeId].width, 12);
+    assert.equal(env.state.imagingCalls.length, 0, "A legacy instance still uses its directory source.");
+    assert.equal(env.localFiles.get("gameui-resource-catalog.json").text, oldDirectoryText);
+    const v2 = JSON.parse(env.localFiles.get("gameui-resource-catalog-v2.json").text);
+    assert.equal(v2.schemaVersion, 2);
+    assert.deepEqual(v2.nineSlices[ref].nineSlice, legacy.assets[ref].nineSlice);
+    assert.equal(v2.authoring.targets, undefined);
+});
+
+test("a queued resource command stops when Photoshop changes the selected layer", async () => {
+    const env = await panelHarness();
+    primarySource64(env);
+    const executeAsModal = env.photoshop.core.executeAsModal;
+    let continueModal;
+    env.photoshop.core.executeAsModal = async action => {
+        await new Promise(resolve => { continueModal = resolve; });
+        return executeAsModal(action);
+    };
+    const pending = env.click("primaryAction");
+    const differentLayer = { ...env.layer, id: 11 };
+    env.doc.layers.push(differentLayer);
+    env.doc.activeLayers = [differentLayer];
+    continueModal();
+    await pending;
+    assert.match(env.elements.status.textContent, /选层已变化/);
+    assert.equal(await env.metadata(), null);
+    assert.equal(env.file.text, undefined);
+    assert.equal(env.state.history.length, 0);
+    assert.equal(env.state.imagingCalls.length, 0);
+});
+
 test("primary action failure rolls back pixels and XMP in one history step and preserves a legal unused catalog snapshot", async () => {
     const env = await panelHarness(), raw = primarySource64(env);
     const bounds = { ...env.layer.boundsNoEffects };
@@ -831,7 +929,39 @@ test("primary action failure rolls back pixels and XMP in one history step and p
     assert.equal(env.state.history.length, 1); assert.equal(env.state.history[0].committed, false);
     const catalog = JSON.parse(env.file.text);
     assert.equal(Object.keys(catalog.assets).length, 1); assert.equal(Object.keys(catalog.nodes).length, 0);
-    assert.equal(catalog.authoring.targets, undefined); assert.doesNotThrow(() => author.validateMetadata(catalog));
+    assert.equal(catalog.authoring.targets, undefined); assert.doesNotThrow(() => author.readCatalog(catalog));
+});
+
+test("public resource collection leaves the PSD untouched and nine-slice setup reuses its source", async () => {
+    const env = await panelHarness(); primarySource64(env);
+    await env.click("tabPublicResources");
+    assert.equal(env.elements.authoringPane.style.display, "none");
+    env.elements.publicResourceName.value = "可复用按钮源图";
+    await env.click("collectPublicResource");
+    const stored = JSON.parse(env.file.text), [ref] = Object.keys(stored.assets);
+    assert.deepEqual(stored.nineSlices, {});
+    assert.deepEqual(stored.requiredCapabilities, []);
+    assert.equal(await env.metadata(), null);
+    assert.equal(env.state.history.length, 0);
+
+    await env.click("tabAuthoring");
+    env.chooseResource(ref);
+    assert.equal(env.elements.primaryAction.textContent, "记录九宫格并应用");
+    env.elements.left.value = "8"; env.elements.right.value = "9";
+    env.elements.targetWidth.value = "128"; env.elements.targetHeight.value = "80";
+    await env.click("primaryAction");
+
+    const value = await env.metadata(), updated = JSON.parse(env.file.text);
+    assert.ok(value, env.elements.status.textContent);
+    assert.equal(value.schemaVersion, 1);
+    assert.equal(value.nodes[10].assetRef, ref);
+    assert.equal(updated.nineSlices[ref].nineSlice.left, 8);
+    assert.deepEqual(updated.assets[ref], stored.assets[ref]);
+    assert.deepEqual(value.authoring.sources[ref], stored.authoring.sources[ref]);
+    assert.equal(env.state.imagingCalls.length, 1);
+    assert.equal(env.state.history.length, 1);
+    const reloaded = await panelHarness(env.file.text);
+    assert.ok(reloaded.elements.resources.children.some(row => row.getAttribute("data-resource-ref") === ref));
 });
 
 test("primary action rejects same-name creation and unsafe existing metadata without overwriting or guessing a first resource", async () => {
@@ -905,8 +1035,7 @@ test("selection notifications skip while the primary action is busy and bound la
     release(); await action;
     const value = await env.metadata(), ref = value.nodes[10].assetRef;
     assert.match(env.elements.selection.textContent, /other/);
-    assert.equal(env.chosenResource(), ref);
-    env.chooseResource("");
+    assert.equal(env.chosenResource(), "");
     env.doc.activeLayers = [env.layer]; await env.notify("select");
     assert.equal(env.chosenResource(), ref); assert.equal(env.elements.targetWidth.value, "128");
     assert.equal(env.elements.targetHeight.value, "80");
@@ -1047,7 +1176,7 @@ test("inline resource rows choose the exact last version without writing PSD and
     await env.click("refresh");
     assert.ok(env.elements.resources.children.every((row, index) => row === rows[index]), "Unchanged choices retain their mounted buttons and scroll container.");
     env.chooseResource("");
-    assert.equal(env.chosenResource(), ""); assert.match(rows[0].textContent, /^已选 · 新建公共资源$/);
+    assert.equal(env.chosenResource(), ""); assert.match(rows[0].textContent, /^已选 · 新建九宫格源图$/);
     assert.equal(await env.metadata(), null); assert.equal(env.file.text, JSON.stringify(library));
     assert.equal(env.state.history.length, 0);
 });
@@ -1074,36 +1203,85 @@ test("inline resource rows cannot change the chosen version while primary action
     assert.equal((await env.metadata()).nodes[10].assetRef, ref, "Choosing another row alone must not write a binding.");
 });
 
-test("tool tabs keep the internal workspace in its own tab, preserve inputs and reuse one connection", async () => {
+test("upload opens first without loading resources, and tabs preserve inputs and reuse one connection", async () => {
     const state = { connected: false, uploading: false, loggedIn: false, projectId: null };
-    let connections = 0, uploads = 0, destroyed = 0;
-    const env = await panelHarness(undefined, undefined, { lanhuHost: ({ onStatus }) => ({
+    let connections = 0, destroyed = 0;
+    const uploads = [];
+    const env = await panelHarness("{broken", undefined, { startOnUpload: true, lanhuHost: ({ onStatus }) => ({
         status: () => state,
-        workspace: () => ({ ...state, deviceType: "Web", deviceScale: "@1x", scales: { Web: [{ label: "@1x", value: "网页" }] } }),
+        workspace: () => ({ ...state, deviceType: "Web", deviceScale: "@1x", scales: { Web: [{ label: "@1x", value: "网页" }] },
+            allArtboards: [{ id: "board", name: "主界面" }] }),
         async connect() { connections++; state.connected = true; state.loggedIn = true; state.projectId = "cfea1199-7c07-48d9-86ef-cdbd3385c237"; onStatus("connected"); },
-        async upload() { uploads++; onStatus("handed to official upload"); },
+        async upload(scope) { uploads.push(scope); onStatus("handed to official upload"); },
         async destroy() { destroyed++; }
     }) });
     for (const id of ["authoringUploadLanhu", "authoringOpenLanhu", "authoringToggleLanhu", "authoringLanhuStatus", "authoringLanhuInline", "openLanhuOfficial", "lanhuMount"]) assert.equal(env.elements[id], undefined);
-    env.elements.displayName.value = "正在创作的名称"; env.elements.targetWidth.value = "192";
-    await env.click("tabLanhu");
-    assert.equal(connections, 1, "Entering the tab initializes the business connection without a load-interface landing page.");
+    assert.equal(env.elements.lanhuUploadTab.getAttribute("aria-selected"), "true");
+    assert.equal(env.state.notificationEvents, undefined, "Resource initialization does not run during ordinary upload.");
+    await env.entrypoints.value.panels.gameuiAuthoring.show();
+    assert.equal(connections, 1, "Showing the panel connects to the blue lake workspace.");
     assert.equal(env.elements.lanhuPane.style.display, "block"); assert.equal(env.elements.authoringPane.style.display, "none");
-    assert.equal(env.elements.tabLanhu.getAttribute("aria-selected"), "true");
+    assert.equal(env.elements.lanhuUploadAction.textContent, "上传 1 个画板");
+    await env.click("lanhuUploadAction");
+    assert.deepEqual(clone(uploads), [{ documentId: env.doc.id, boardIds: ["board"] }]);
     await env.click("connectLanhu"); assert.equal(connections, 1);
     await env.click("tabAuthoring");
+    assert.match(env.elements.status.textContent, /目录检查失败/);
+    env.elements.displayName.value = "正在创作的名称"; env.elements.targetWidth.value = "192";
+    await env.click("authoringBack");
     assert.equal(env.elements.displayName.value, "正在创作的名称"); assert.equal(env.elements.targetWidth.value, "192");
-    await env.click("tabLanhu");
-    env.elements.lanhuDevice.value = "Web"; env.elements.lanhuScale.value = "@1x";
     await env.click("connectLanhu");
-    await env.click("lanhuUploadAction"); assert.equal(uploads, 1);
+    await env.click("lanhuUploadAction"); assert.equal(uploads.length, 2);
     assert.equal(connections, 1, "Switching tabs reuses the internal session.");
     await env.click("tabAuthoring");
     assert.equal(env.elements.authoringPane.style.display, "block");
     assert.equal(env.elements.lanhuPane.style.display, "none");
     assert.equal(env.elements.displayName.value, "正在创作的名称");
-    assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined); assert.equal(env.state.history.length, 0);
+    assert.equal(await env.metadata(), null); assert.equal(env.file.text, "{broken"); assert.equal(env.state.history.length, 0);
     await env.entrypoints.value.plugin.destroy(); assert.equal(destroyed, 1);
+});
+
+test("standalone package explains the integration requirement in both Lanhu tabs without trying to connect", async () => {
+    const state = { connected: false, uploading: false, loggedIn: false };
+    const env = await panelHarness(undefined, undefined, { startOnUpload: true, standalone: true, showDuringSetup: true,
+        lanhuHost: () => ({ status: () => state, connect() { assert.fail("Standalone must not attempt to connect"); } }) });
+    assert.match(env.elements.lanhuStatus.textContent, /当前安装的是 GameUI 独立版/);
+    assert.equal(env.elements.lanhuReconnect.style.display, "none");
+    await env.click("lanhuSliceTab");
+    assert.match(env.elements.lanhuSliceStatus.textContent, /需要安装带蓝湖功能的集成版/);
+    assert.equal(env.elements.lanhuSliceReconnect.style.display, "none");
+    assert.equal(env.elements.lanhuSliceTools.style.display, "none");
+    await env.click("resourcesTab");
+    assert.equal(env.elements.resourcesTab.getAttribute("aria-selected"), "true");
+    assert.equal(env.elements.publicResourcesPane.style.display, "block");
+    await env.click("tabAuthoring");
+    await env.click("lanhuSliceTab");
+    assert.equal(env.elements.resourceTabs.style.display, "none");
+    await env.click("resourcesTab");
+    assert.equal(env.elements.authoringPane.style.display, "block", "Resources reopens its last subpage.");
+});
+
+test("retry shows progress, blocks duplicate clicks, and opens login after a recovered connection", async () => {
+    const state = { connected: false, uploading: false, loggedIn: false };
+    let attempts = 0, finish;
+    const env = await panelHarness(undefined, undefined, { startOnUpload: true, showDuringSetup: true,
+        lanhuHost: () => ({ status: () => state, async connect() {
+            if (++attempts === 1) throw new Error("蓝湖初始化失败，请重试。");
+            await new Promise(resolve => { finish = resolve; });
+            state.connected = true;
+        } }) });
+    assert.equal(env.elements.lanhuStatus.textContent, "蓝湖初始化失败，请重试。");
+    const retry = env.click("lanhuReconnect");
+    assert.equal(env.elements.lanhuReconnect.textContent, "正在连接蓝湖…");
+    assert.equal(env.elements.lanhuReconnect.style.display, "flex");
+    assert.equal(env.elements.lanhuReconnect.getAttribute("aria-disabled"), "true");
+    await env.click("lanhuReconnect");
+    assert.equal(attempts, 2);
+    finish();
+    await retry;
+    assert.equal(env.elements.lanhuReconnect.style.display, "none");
+    assert.equal(env.elements.lanhuLogin.style.display, "block");
+    assert.equal(env.elements.lanhuStatus.textContent, "请使用蓝湖账号登录。");
 });
 
 test("official upload progress blocks authoring writes and a failed Lanhu connection leaves upload disabled", async () => {
@@ -1123,6 +1301,71 @@ test("official upload progress blocks authoring writes and a failed Lanhu connec
     assert.match(env.elements.lanhuStatus.textContent, /操作未完成/);
     assert.match(env.elements.errorDetails.textContent, /controlled connection failure/);
     assert.equal(env.elements.lanhuUploadAction.disabled, true);
+});
+
+test("partial and unknown upload results never expose a bulk retry button", async () => {
+    const view = { connected: true, loggedIn: true, uploading: false, projectId: "cfea1199-7c07-48d9-86ef-cdbd3385c237",
+        deviceType: "Web", deviceScale: "@1x", allArtboards: [{ id: "board", name: "主界面" }] };
+    let changed;
+    const actions = [];
+    const env = await panelHarness(undefined, undefined, { startOnUpload: true, lanhuHost: ({ onChange }) => {
+        changed = onChange;
+        return { status: () => view, workspace: () => view, async destroy() {}, async perform(action) {
+            actions.push(action);
+            if (action === "back") view.upload = null;
+        } };
+    } });
+    for (const phase of ["fail", "unknown"]) {
+        view.upload = { phase, percentage: 80, total: 2, success: 1, fail: 1,
+            rows: [{ id: "a", name: "主界面", state: phase === "fail" ? "success" : "unknown" }, { id: "b", name: "设置页", state: "fail" }] };
+        changed();
+        assert.match(env.elements.lanhuProgress.textContent, /不要直接重传整批/);
+        assert.deepEqual(env.elements.lanhuUploadRows.children.map(item => item.textContent),
+            [phase === "fail" ? "主界面 · 已上传" : "主界面 · 待确认", "设置页 · 失败"]);
+        assert.equal(env.elements.lanhuUploadAction.style.display, "none");
+        assert.equal(env.elements.lanhuUploadAction.disabled, true);
+        await env.click("lanhuBack");
+        assert.equal(env.elements.lanhuUploadAction.style.display, "block");
+        assert.equal(env.elements.lanhuUploadRows.children.length, 0);
+    }
+    view.upload = { phase: "fail", percentage: 99, total: 2, success: 1, fail: 1, canRetry: true, canView: true };
+    changed();
+    assert.equal(env.elements.lanhuRetryUpload.style.display, "block");
+    await env.click("lanhuRetryUpload");
+    assert.deepEqual(actions, ["back", "back", "retryUpload"]);
+    view.upload = { phase: "unknown", percentage: 99, total: 1, success: 1, fail: 0, canView: true };
+    changed();
+    assert.equal(env.elements.lanhuRetryUpload.style.display, "none");
+    assert.equal(env.elements.lanhuViewUpload.style.display, "block");
+});
+
+test("slice panel submits frame dimensions and clears them when Photoshop changes the selection", async () => {
+    const view = { connected: true, uploading: false, slice: { ids: [1], canMark: true, marked: 0, width: 64, height: 48, regionsVisible: true } };
+    const calls = [];
+    let changed;
+    const env = await panelHarness(undefined, undefined, { startOnUpload: true, lanhuHost: ({ onChange }) => {
+        changed = onChange;
+        return { status: () => view, workspace: () => view, async destroy() {}, async perform(action, value) {
+            calls.push([action, value?.width, value?.height]);
+            if (action === "hiddenSlice") view.slice.regionsVisible = false;
+        } };
+    } });
+    await env.click("lanhuSliceTab");
+    assert.equal(env.elements.lanhuSliceHeight.getAttribute("placeholder"), "48");
+    env.elements.lanhuSliceWidth.value = "96";
+    changed();
+    assert.equal(env.elements.lanhuSliceWidth.value, "96");
+    await env.click("lanhuSliceGroup");
+    assert.deepEqual(calls, [["sliceWithGroup", "96", ""]]);
+    await env.click("lanhuSliceVisibility");
+    assert.equal(env.elements.lanhuSliceVisibility.getAttribute("aria-checked"), "false");
+    assert.equal(calls.at(-1)[0], "hiddenSlice");
+    view.slice = { ids: [2], canMark: false, marked: 1, mode: "frame" };
+    changed();
+    assert.equal(env.elements.lanhuSliceWidth.value, "");
+    assert.equal(env.elements.lanhuSliceGroup.disabled, true);
+    assert.equal(env.elements.lanhuUnslice.disabled, false);
+    assert.match(env.elements.lanhuSliceSelection.textContent, /已标记框选切图/);
 });
 
 test("panel reports supported-layer failures in Chinese and retains original diagnostics without changing metadata", async () => {
@@ -1153,7 +1396,7 @@ test("native Lanhu workspace renders real lists and wires account, selection and
             if (name === "settings") Object.assign(view, value);
         }, async destroy() {}
     }) });
-    await env.click("tabLanhu");
+    await env.click("lanhuUploadTab");
     assert.ok(env.elements.lanhuLoginAction.listeners.click);
     assert.equal(env.elements.lanhuBoardList.children[0].textContent, "主界面");
     assert.equal(env.elements.lanhuUploadAction.disabled, true);
@@ -1170,11 +1413,12 @@ test("native Lanhu workspace renders real lists and wires account, selection and
     assert.equal(env.elements.lanhuUploadAction.disabled, false);
     await env.click("lanhuBoardsSelected");
     assert.equal(view.artboardType, 2);
-    assert.match(env.elements.lanhuBoardList.textContent, /暂无可上传画板/);
+    assert.match(env.elements.lanhuBoardList.textContent, /请在 Photoshop 选中/);
+    assert.equal(env.elements.lanhuUploadAction.disabled, true);
     await env.click("lanhuSliceTab");
     assert.equal(env.elements.lanhuSliceView.style.display, "block");
     assert.equal(env.elements.lanhuUploadView.style.display, "none");
-    await env.click("tabAuthoring"); await env.click("tabLanhu");
+    await env.click("tabAuthoring"); await env.click("lanhuUploadTab");
     assert.equal(env.elements.lanhuPane.style.display, "block");
     assert.equal(env.elements.lanhuAccountSummary.textContent, "美术");
     assert.equal(await env.metadata(), null); assert.equal(env.file.text, undefined);
@@ -1189,11 +1433,11 @@ test("native browser authorization preserves pending and cancel state across tab
         status: () => view, workspace: () => view, async connect() { view.connected = true; },
         async perform(name) { calls.push(name); if (name === "browserAuth") view.browserAuthorizing = true; if (name === "cancelBrowserAuth") view.browserAuthorizing = false; }, async destroy() {}
     }) });
-    await env.click("tabLanhu"); await env.click("lanhuBrowserAuth");
+    await env.click("lanhuUploadTab"); await env.click("lanhuBrowserAuth");
     assert.equal(view.browserAuthorizing, true); assert.equal(env.elements.lanhuBrowserAuth.disabled, true);
     assert.equal(env.elements.lanhuLoginAction.disabled, true); assert.equal(env.elements.lanhuCancelAuth.style.display, "block");
     assert.match(env.elements.lanhuAuthHint.textContent, /等待浏览器授权/);
-    await env.click("tabAuthoring"); await env.click("tabLanhu");
+    await env.click("tabAuthoring"); await env.click("lanhuUploadTab");
     assert.equal(env.elements.lanhuPane.style.display, "block");
     await env.click("lanhuCancelAuth");
     assert.equal(view.browserAuthorizing, false); assert.equal(env.elements.lanhuBrowserAuth.disabled, false);
@@ -1338,7 +1582,8 @@ test("floating pickers follow viewport bounds, flip above and restore covered na
     const box = (left, top, right, bottom) => ({ left, top, right, bottom });
     let anchor = box(200, 140, 340, 172);
     env.elements.panelViewport.getBoundingClientRect = () => box(10, 89, 310, 400);
-    env.elements.panelOverlays.getBoundingClientRect = () => box(5, 10, 315, 10);
+    const overlay = env.elements.panelOverlays;
+    env.elements.panelFrame.getBoundingClientRect = () => box(5, 10, 315, 410);
     trigger.getBoundingClientRect = () => anchor;
     list.scrollHeight = 60;
     env.elements.targetWidth.getBoundingClientRect = () => box(180, 180, 250, 212);
@@ -1348,19 +1593,20 @@ test("floating pickers follow viewport bounds, flip above and restore covered na
     assert.equal(menu.parentNode, env.elements.panelOverlays, "Menus must not contribute to the field or content layout.");
     assert.equal(env.elements.sampling.children.length, 1);
     assert.equal(menu.getAttribute("data-placement"), "bottom");
-    assert.equal(menu.style.left, "161px"); assert.equal(menu.style.top, "166px");
-    assert.equal(menu.style.width, "140px");
+    assert.equal(overlay.style.left, "161px"); assert.equal(overlay.style.top, "166px");
+    assert.equal(overlay.style.width, "140px"); assert.equal(overlay.style.height, "70px");
     assert.equal(env.elements.targetWidth.style.visibility, "hidden");
     assert.equal(env.elements.targetHeight.style.visibility, "visible", "Only overlapping editors should be hidden.");
     env.documentEvents.click({ target: list.children[0] });
     assert.equal(trigger.getAttribute("aria-expanded"), "true", "Portal clicks still belong to the picker.");
     anchor = box(200, 360, 340, 392); list.scrollHeight = 480;
     env.elements.panelViewport.listeners.scroll();
-    assert.equal(menu.getAttribute("data-placement"), "top"); assert.equal(menu.style.top, "176px");
+    assert.equal(menu.getAttribute("data-placement"), "top"); assert.equal(overlay.style.top, "176px");
     assert.equal(viewport.style.height, "160px");
     anchor = box(200, 70, 340, 102);
     env.elements.panelViewport.listeners.scroll();
     assert.equal(menu.style.display, "none", "A partially clipped trigger closes its floating menu.");
+    assert.equal(overlay.style.display, "none");
     assert.equal(env.elements.targetWidth.style.visibility, "visible");
     assert.equal(env.elements.targetWidth.value, "180");
     anchor = box(20, 200, 160, 232);
@@ -1372,7 +1618,7 @@ test("floating pickers follow viewport bounds, flip above and restore covered na
     assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
 });
 
-test("main and Lanhu subtabs close floating menus, release drag and restore each page's bounded scroll position", async () => {
+test("top-level tabs close floating menus, release drag and restore each page's bounded scroll position", async () => {
     const view = { connected: true, loggedIn: true, uploading: false, teams: [], projects: [], groups: [], scales: {} };
     const env = await panelHarness(undefined, undefined, { lanhuHost: () => ({ status: () => view, workspace: () => view, async destroy() {} }) });
     const { panelViewport: viewport, panelContent: content, panelScrollbar: rail, panelScrollThumb: thumb } = env.elements;
@@ -1382,7 +1628,7 @@ test("main and Lanhu subtabs close floating menus, release drag and restore each
     } });
     const wheel = deltaY => viewport.listeners.wheel({ type: "wheel", deltaY, preventDefault() {} });
     wheel(200); assert.equal(content.style.top, "-200px");
-    await env.click("tabLanhu"); assert.equal(parseFloat(content.style.top), 0);
+    await env.click("lanhuUploadTab"); assert.equal(parseFloat(content.style.top), 0);
     wheel(300); await env.selectParts("lanhuDevice").trigger.listeners.click();
     rail.listeners.mousedown({ target: thumb, button: 0, clientY: 100, preventDefault() {} });
     assert.ok(env.documentEvents.mousemove);
@@ -1393,9 +1639,9 @@ test("main and Lanhu subtabs close floating menus, release drag and restore each
     wheel(500); assert.equal(content.style.top, "-150px");
     await env.click("lanhuUploadTab"); assert.equal(content.style.top, "-300px");
     await env.click("tabAuthoring"); assert.equal(content.style.top, "-200px");
-    await env.click("tabLanhu"); assert.equal(content.style.top, "-300px");
+    await env.click("lanhuUploadTab"); assert.equal(content.style.top, "-300px");
     await env.click("lanhuSliceTab"); assert.equal(content.style.top, "-150px");
-    assert.equal(env.elements.tabLanhu.getAttribute("aria-selected"), "true");
+    assert.equal(env.elements.lanhuSliceTab.getAttribute("aria-selected"), "true");
     assert.equal(await env.metadata(), null); assert.equal(env.state.history.length, 0);
 });
 
